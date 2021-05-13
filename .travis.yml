@@ -1,0 +1,26 @@
+# The Rust team appreciates testing against the beta and nightly channels, 
+# even if you are only targeting stable. A full configuration looks like this:
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+jobs:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+# Travis CI uses Cargo to install your dependencies: cargo build --verbose
+# and cargo test --verbose
+# Only rebuild changes
+cache: cargo
+
+arch: 
+  - arm64             # test on Aarch64 ArmV8
+  - amd64             # test on x86_64
+os: linux             # required for arch different than amd64
+dist: focal           # or bionic | xenial with xenial as default
+
+# for own script:
+#script:
+#  - cargo build --verbose --workspace
+#  - cargo test --verbose --workspace
