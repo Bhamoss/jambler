@@ -1,0 +1,37 @@
+[package]
+name = "jambler"
+version = "0.1.0"
+authors = ["Bhamoss <26162072+Bhamoss@users.noreply.github.com>"]
+edition = "2018"
+description = "The general ARM chip-independent BLE5 connection deducing and jamming logic."
+license = "GPL-3.0-only"
+keywords = ["embedded", "no-std", "ble", "bleutooth"]
+categories = ["embedded", "no-std"]
+publish = false # no publishing yet
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/Bhamoss/jambler"
+
+[lib]
+test = true            # Is tested by default.
+doctest = false         # Documentation examples are tested by default.
+bench = true           # Is benchmarked by default.
+doc = true             # Is documented by default.
+
+# TODO sync pool needs to dissapear for arm..
+[dependencies]
+heapless = { version = "0.7.0", features = ['serde']}
+gcd = "2.0.1"
+serde = { version = "1.0.125", default-features = false }
+postcard = "0.6.1"
+itertools = { version="0.10.0", default-features = false }
+lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
+
+# test dependencies
+[dev-dependencies]
+# quickcheck is used to check message size (i2c communication of jambler enums)
+quickcheck = "1"
+quickcheck_macros = "1"
+
+# sync pool necessary for x86
+[target.x86_64-unknown-linux-gnu.dependencies]
+heapless = { version = "0.7.0", features = ['serde', 'x86-sync-pool']}
