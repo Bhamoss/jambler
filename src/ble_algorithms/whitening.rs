@@ -3,7 +3,7 @@
 
 /// See figure 3.5 of specification page 2925.
 /// The whitening and dewithening is the same, so just implement the figure.
-fn dewithen_16_bit_pdu_header(first_byte: u8, second_byte: u8, channel: u8) -> (u8, u8) {
+pub fn dewithen_16_bit_pdu_header(first_byte: u8, second_byte: u8, channel: u8) -> (u8, u8) {
     // Initialise according to the spec sheet.
     // 6 rightmost (lsb) bits are set to the channel and 7th (right to left = second most significant) is one.
     // If the channel is valid it will fit in its 6 rightmost bits.

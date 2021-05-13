@@ -14,7 +14,7 @@
 /// assert_eq!(goal, calculated, "Bit shift right failed");
 /// ```
 #[inline]
-fn bit_shift_slice_right(bytes: &mut [u8], input_bit: u8) {
+pub fn bit_shift_slice_right(bytes: &mut [u8], input_bit: u8) {
     bytes.iter_mut().fold(input_bit, |input, byte|
         {
             let next_input = *byte >> 7; // get byte MSb and make it LSb
@@ -38,7 +38,7 @@ fn bit_shift_slice_right(bytes: &mut [u8], input_bit: u8) {
 /// bit_shift_slice_left(&mut calculated, 1);
 /// 
 #[inline]
-fn bit_shift_slice_left(bytes: &mut [u8], mut input_bit: u8) {
+pub fn bit_shift_slice_left(bytes: &mut [u8], mut input_bit: u8) {
     input_bit <<= 7;
     bytes.iter_mut().rev().fold(input_bit, |input, byte|
         {

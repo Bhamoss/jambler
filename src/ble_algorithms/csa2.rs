@@ -77,7 +77,7 @@ pub fn csa2_no_subevent(
 /// Switches the byte by first switching bits next to each other, pairs next to each other, then 4bits next to each other.
 /// This results in each separate byte switched.
 #[inline(always)]
-fn perm(mut input: u32) -> u32 {
+pub fn perm(mut input: u32) -> u32 {
     input = ((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1);
     input = ((input & 0xcccc) >> 2) | ((input & 0x3333) << 2);
     input = ((input & 0xf0f0) >> 4) | ((input & 0x0f0f) << 4);
@@ -86,7 +86,7 @@ fn perm(mut input: u32) -> u32 {
 
 /// Operation block in the CSA#2 algorithm.
 #[inline(always)]
-fn mam(a: u32, b: u32) -> u32 {
+pub fn mam(a: u32, b: u32) -> u32 {
     let mut ret: u32;
     //ret = a as u32 * 17; // cannot overflow! upgrade to u32
     // a * 17 = a * 2^4 + a

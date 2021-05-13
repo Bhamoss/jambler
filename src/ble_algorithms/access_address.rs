@@ -4,7 +4,7 @@ use crate::jambler::BlePhy;
 
 
  #[inline]
- fn is_valid_aa(mut aa: u32, phy: BlePhy) -> bool {
+pub fn is_valid_aa(mut aa: u32, phy: BlePhy) -> bool {
      let aa_copy = aa;
  
      let mut consecutive_6 = 0_u8;

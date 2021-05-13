@@ -3,20 +3,27 @@
 language: rust
 rust:
   - stable
-  - beta
-  - nightly
-jobs:
-  allow_failures:
-    - rust: nightly
-  fast_finish: true
+#  - beta
+#  - nightly
+
+#before_install:
+#  - curl -L https://github.com/mozilla/grcov/releases/latest/download/grcov-linux-x86_64.tar.bz2 | tar jxf -
+
+
+
+#jobs:
+#  allow_failures:
+#    - rust: nightly
+#  fast_finish: true
 # Travis CI uses Cargo to install your dependencies: cargo build --verbose
 # and cargo test --verbose
 # Only rebuild changes
 cache: cargo
 
+sudo: false # only for faster builds
 arch: 
   - arm64             # test on Aarch64 ArmV8
-  - amd64             # test on x86_64
+#  - amd64             # test on x86_64
 os: linux             # required for arch different than amd64
 dist: focal           # or bionic | xenial with xenial as default
 
@@ -24,3 +31,13 @@ dist: focal           # or bionic | xenial with xenial as default
 #script:
 #  - cargo build --verbose --workspace
 #  - cargo test --verbose --workspace
+
+# only stable arm build to reduce travis ci credit usage
+
+#script:
+#    - rustup component add llvm-tools-preview
+#    - export RUSTFLAGS="-Zinstrument-coverage"
+#    - cargo build --verbose
+#    - LLVM_PROFILE_FILE="your_name-%p-%m.profraw" cargo test --verbose
+#    - ./grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" -o lcov.info
+#    - bash <(curl -s https://codecov.io/bash) -f lcov.info
