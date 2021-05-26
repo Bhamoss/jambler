@@ -18,21 +18,26 @@ doctest = false         # Documentation examples are tested by default.
 bench = true           # Is benchmarked by default.
 doc = true             # Is documented by default.
 
+
 # TODO sync pool needs to dissapear for arm..
 [dependencies]
 heapless = { version = "0.7.0", features = ['serde']}
-gcd = "2.0.1"
+#gcd = "2.0.1"
 serde = { version = "1.0.125", default-features = false }
-postcard = "0.6.1"
+postcard = "0.7.0"
 itertools = { version="0.10.0", default-features = false }
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
+num = {version="0.4.0", default-features = false}
 
 # test dependencies
 [dev-dependencies]
 # quickcheck is used to check message size (i2c communication of jambler enums)
 quickcheck = "1"
 quickcheck_macros = "1"
+statrs = "0.13.0"
+itertools = { version="0.10.0"}
 
 # sync pool necessary for x86
 [target.x86_64-unknown-linux-gnu.dependencies]
 heapless = { version = "0.7.0", features = ['serde', 'x86-sync-pool']}
+

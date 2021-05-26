@@ -49,15 +49,7 @@ pub fn csa2_no_subevent(
     nb_used: u8,
 ) -> u8 {
     // calculate "pseudo random number e", figure 4.46
-    let mut prn_e: u32;
-    prn_e = counter ^ channel_identifier; // xor
-    prn_e = perm(prn_e); // perm
-    prn_e = mam(prn_e, channel_identifier); // mam
-    prn_e = perm(prn_e); // perm
-    prn_e = mam(prn_e, channel_identifier); // mam
-    prn_e = perm(prn_e); // perm
-    prn_e = mam(prn_e, channel_identifier); // mam
-    prn_e ^= channel_identifier;
+    let prn_e = prn_e(counter as u16, channel_identifier as u16);
 
     // figure 4.47
     let unmapped_channel: u8 = (prn_e % 37) as u8;
@@ -77,7 +69,7 @@ pub fn csa2_no_subevent(
 /// Switches the byte by first switching bits next to each other, pairs next to each other, then 4bits next to each other.
 /// This results in each separate byte switched.
 #[inline(always)]
-pub fn perm(mut input: u32) -> u32 {
+pub fn perm(mut input: u16) -> u16 {
     input = ((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1);
     input = ((input & 0xcccc) >> 2) | ((input & 0x3333) << 2);
     input = ((input & 0xf0f0) >> 4) | ((input & 0x0f0f) << 4);
@@ -86,14 +78,15 @@ pub fn perm(mut input: u32) -> u32 {
 
 /// Operation block in the CSA#2 algorithm.
 #[inline(always)]
-pub fn mam(a: u32, b: u32) -> u32 {
+pub fn mam(a: u16, b: u16) -> u16 {
     let mut ret: u32;
     //ret = a as u32 * 17; // cannot overflow! upgrade to u32
     // a * 17 = a * 2^4 + a
-    ret = (a << 4) + a;
-    ret += b;
+    //ret = (a << 4) + a;
+    ret = a as u32 * 17;
+    ret += b as u32;
     // mod 2^16
-    ret & 0xFFFF
+    ret as u16
 }
 
 
@@ -109,18 +102,9 @@ pub fn csa2(
     remapping_table: &[u8; 37],
     inverse_remapping_table: &[u8; 37],
     nb_used: u8,
-) -> (u8, u32, u8) {
+) -> (u8, u16, u8) {
     // calculate "pseudo random number e", figure 4.46
-    let mut prn_e: u32;
-    prn_e = counter ^ channel_identifier; // xor
-    prn_e = perm(prn_e); // perm
-    prn_e = mam(prn_e, channel_identifier); // mam
-    prn_e = perm(prn_e); // perm
-    prn_e = mam(prn_e, channel_identifier); // mam
-    prn_e = perm(prn_e); // perm
-    prn_e = mam(prn_e, channel_identifier); // mam
-    let prn_s = prn_e;
-    prn_e ^= channel_identifier;
+    let (prn_e, prn_s) = prn_e_s(counter as u16, channel_identifier as u16);
 
     // figure 4.47
     let unmapped_channel: u8 = (prn_e % 37) as u8;
@@ -142,6 +126,33 @@ pub fn csa2(
             remapping_index as u8,
         )
     }
+}
+
+pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
+    let mut prn_e: u16;
+    prn_e = counter ^ channel_identifier; // xor
+    prn_e = perm(prn_e); // perm
+    prn_e = mam(prn_e, channel_identifier); // mam
+    prn_e = perm(prn_e); // perm
+    prn_e = mam(prn_e, channel_identifier); // mam
+    prn_e = perm(prn_e); // perm
+    prn_e = mam(prn_e, channel_identifier); // mam
+    prn_e ^= channel_identifier;
+    prn_e
+}
+
+pub fn prn_e_s(counter: u16, channel_identifier: u16) -> (u16, u16) {
+    let mut prn_e: u16;
+    prn_e = counter ^ channel_identifier; // xor
+    prn_e = perm(prn_e); // perm
+    prn_e = mam(prn_e, channel_identifier); // mam
+    prn_e = perm(prn_e); // perm
+    prn_e = mam(prn_e, channel_identifier); // mam
+    prn_e = perm(prn_e); // perm
+    prn_e = mam(prn_e, channel_identifier); // mam
+    let prn_s = prn_e;
+    prn_e ^= channel_identifier;
+    (prn_e, prn_s)
 }
 
 pub fn calculate_subevent_d(nb_used: u8) -> u8 {
@@ -192,8 +203,8 @@ pub fn csa2_subevent(
 ) -> (u8, u32, u32) {
     // figure 4.49
     let mut prn_sub_event_se: u32;
-    prn_sub_event_se = perm(last_usedprn);
-    prn_sub_event_se = mam(prn_sub_event_se, channel_identifier);
+    prn_sub_event_se = perm(last_usedprn as u16) as u32;
+    prn_sub_event_se = mam(prn_sub_event_se as u16, channel_identifier as u16) as u32;
     let prn_sub_event_lu: u32 = prn_sub_event_se;
     prn_sub_event_se ^= channel_identifier;
 
@@ -257,7 +268,7 @@ mod tests {
 
         let d = calculate_subevent_d(nb_used);
 
-        let mut last_usedprn = prn_s;
+        let mut last_usedprn = prn_s as u32;
         let mut index_of_last_used_channel = remapping_index_of_last_used_channel as u32;
 
         for _ in 1..nb_subevents {
@@ -364,26 +375,26 @@ mod tests {
 
     #[test]
     fn test_perm() {
-        let start: u32 = 0b0001_0011_0000_1111;
-        let end: u32 = 0b1100_1000_1111_0000;
+        let start: u16 = 0b0001_0011_0000_1111;
+        let end: u16 = 0b1100_1000_1111_0000;
         assert_eq!(perm(start), end);
 
-        let start: u32 = 0b0101_1011_0000_0010;
-        let end: u32 = 0b1101_1010_0100_0000;
+        let start: u16 = 0b0101_1011_0000_0010;
+        let end: u16 = 0b1101_1010_0100_0000;
         assert_eq!(perm(start), end);
     }
 
     #[test]
     fn test_mam() {
-        let a: u32 = 23457;
-        let b: u32 = 4352;
-        let result: u32 = 9905; // Python3: (((23457 * 17) + 4352) % (2**16))
+        let a: u16 = 23457;
+        let b: u16 = 4352;
+        let result: u16 = 9905; // Python3: (((23457 * 17) + 4352) % (2**16))
 
         assert_eq!(mam(a, b), result);
 
-        let a: u32 = 63928;
-        let b: u32 = 59348;
-        let result: u32 = 32012; // Python3: (((63928 * 17) + 59348) % (2**16))
+        let a: u16 = 63928;
+        let b: u16 = 59348;
+        let result: u16 = 32012; // Python3: (((63928 * 17) + 59348) % (2**16))
 
         assert_eq!(mam(a, b), result);
     }
