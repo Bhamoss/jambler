@@ -36,6 +36,9 @@ quickcheck = "1"
 quickcheck_macros = "1"
 statrs = "0.13.0"
 itertools = { version="0.10.0"}
+rand = "0.8.3"
+rand_chacha = "0.3.0"
+#rayon = "1.5.0"
 
 # sync pool necessary for x86
 [target.x86_64-unknown-linux-gnu.dependencies]

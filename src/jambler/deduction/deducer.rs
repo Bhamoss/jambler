@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use super::{brute_force::{BruteForceParameters, BruteForceResult}, control::{DeducerToMaster, MasterToDeducer, BruteForceParametersBox, DeducedParametersBox}, distributions::{geo_qdf, chance_and_combo_reality}};
+use super::{brute_force::{BruteForceParameters, BruteForceResult}, control::{DeducerToMaster, MasterToDeducer, BruteForceParametersBox, DeducedParametersBox}, distributions::{geo_qdf, prob_of_seeing_if_used}};
 use crate::{ble_algorithms::csa2::{calculate_channel_identifier}, jambler::BlePhy};
 // vscode gives fake warnings here, thinking we are using std for some reason...
 #[allow(unused_imports)]
@@ -497,7 +497,7 @@ impl<'a> DeductionState<'a> {
                     // Sum combo all above thresshold for the nb of false negatives it would be for this nb of unused
                     (0u8..=nb_unused_seen)
                     .filter_map(|nb_false_neg| 
-                        if chance_and_combo_reality(nb_unused_seen, nb_false_neg,nb_events, 1.0 - self.start_parameters.packet_loss) >= *thresshold {
+                        if prob_of_seeing_if_used(nb_unused_seen, nb_false_neg,nb_events, 1.0 - self.start_parameters.packet_loss) >= *thresshold {
                             // binom will only be calculated for things above the threshold and lowering it will short circuit.
                             // Thus this will stop before overflow, because last sum bigger then max is ok.
                             // TODO check this
@@ -517,7 +517,7 @@ impl<'a> DeductionState<'a> {
                          // Sum all below thresshold for the nb of false negatives possible
                          (0u8..=nb_used)
                          .map(|nb_false_neg|
-                            chance_and_combo_reality(37 -nb_used + nb_false_neg, nb_false_neg,nb_events, 1.0 - self.start_parameters.packet_loss)
+                            prob_of_seeing_if_used(37 -nb_used + nb_false_neg, nb_false_neg,nb_events, 1.0 - self.start_parameters.packet_loss)
                                 )
                          .filter(|fn_chance| *fn_chance < *thresshold).sum::<f32>()
                      ).reduce(|a,b| if a > b {a} else {b}).unwrap();
@@ -732,6 +732,7 @@ impl<'a> DeductionState<'a> {
                 CounterInterval::NoSolutions => {
                     // RESET 
                     // Restart yourself with your own parameters
+                    // TODO could check for BLE4 right here. You still have your anchor points. Could be another stage, maybe branch.
                     let own_start_params = self.start_parameters;
                     self.start(own_start_params); // <- will make a master request himself!
                 }
@@ -842,5 +843,37 @@ fn round_to_1250(d : u32) -> u32 {
     } 
     else {
         d + 1250 - mod_1250
+    }
+}
+
+#[cfg(test)]
+mod deducer_helper_tests {
+    use itertools::Itertools;
+
+    use super::*;
+
+    #[test]
+    fn round_1250() {
+        let target = 123 * 1250u32;
+        ((target - 624)..(target+624)).for_each(|d| assert_eq!(round_to_1250(d), target));
+    }
+    #[test]
+    fn round_con() {
+        let conn_interval = 932 * 1250u32;
+        let target = 123 * conn_interval;
+        let border = conn_interval / 2 - 1;
+        ((target - border)..(target+border)).map(|d| round_to_conn_interval(d, conn_interval))
+            .for_each(|(rounded, in_con)| {
+                assert_eq!(rounded, target);
+                assert_eq!(in_con, 123);
+            });
+    }
+
+
+    #[test]
+    fn phy_time() {
+        let target = vec![phy_to_max_time(&BlePhy::Uncoded1M), phy_to_max_time(&BlePhy::Uncoded2M), phy_to_max_time(&BlePhy::CodedS2), phy_to_max_time(&BlePhy::CodedS8)];
+        target.iter().combinations(2).for_each(|d| assert_ne!(*d[0], *d[1]));
+        assert_eq!(target[1], 2128 / 2 + 4);
     }
 }

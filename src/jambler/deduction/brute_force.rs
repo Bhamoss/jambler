@@ -4,7 +4,7 @@ use heapless::{Vec, pool::Box};
 
 use crate::ble_algorithms::csa2::{csa2_no_subevent, generate_channel_map_arrays};
 
-use super::{deducer::CounterInterval, distributions::chance_and_combo_reality};
+use super::{deducer::CounterInterval, distributions::prob_of_seeing_if_used};
 
 
 
@@ -47,6 +47,9 @@ pub struct BruteForceResult {
 
 pub fn brute_force(sniffer_id: u8, params: Box<BruteForceParameters>) -> BruteForceResult {
 
+    // TODO for likely false negatives, take from 0..max because if your packet loss is less bad than expected
+    // TODO this will result in no solution if your sniffer did capture all packets
+
     // remember version before consume
     let version = params.version;
     let seen_chm = params.seen_channel_map;
@@ -63,7 +66,7 @@ pub fn brute_force(sniffer_id: u8, params: Box<BruteForceParameters>) -> BruteFo
     // Get an iterator returning the false negatives above the threshold
     let nb_unused_seen = (0u8..37).filter(|channel| params.seen_channel_map & (1 << *channel) == 0).count() as u8;
     let likely_false_negatives = (0..=nb_unused_seen)
-        .filter(|fns| chance_and_combo_reality(nb_unused_seen, *fns, params.nb_events, 1.0 - params.packet_loss) >= params.threshold);
+        .filter(|fns| prob_of_seeing_if_used(nb_unused_seen, *fns, params.nb_events, 1.0 - params.packet_loss) >= params.threshold);
 
     // Brute force for every nb of likely false negatives
     let result = likely_false_negatives.map(|nb_false_negs| {
@@ -73,33 +76,20 @@ pub fn brute_force(sniffer_id: u8, params: Box<BruteForceParameters>) -> BruteFo
             let (channel_map_bool_array,remapping_table, _, nb_used) =  generate_channel_map_arrays(chm);
 
             // now we have concrete channel map as before
-            let mut running_event_counter;
 
             let mut found_counter: Option<u32> = None;
-            let mut inconsistency: bool;
             for potential_counter in start..=end {
-                // reset inconsistency
-                inconsistency = false;
-                for (relative_counter, channel) in params.relative_counters_and_channels.iter() {
-                    running_event_counter =  potential_counter.wrapping_add(*relative_counter);
-                    let channel_potential_counter = csa2_no_subevent(
-                        running_event_counter as u32,
-                        params.channel_id as u32,
-                        &channel_map_bool_array,
-                        &remapping_table,
-                        nb_used,
-                    );
 
-                    // If we get another one than expected, go to next counter
-                    if channel_potential_counter != *channel {
-                        inconsistency = true;
-                        break;
-                    }
-                }
-
-
-                // If there was no inconsistency for this potential counter save it
-                if !inconsistency {
+                // If there is no inconsistency for this potential counter save it
+                if params.relative_counters_and_channels.iter().all(|(relative_counter, channel)| *channel ==
+                        csa2_no_subevent(
+                            potential_counter.wrapping_add(*relative_counter) as u32,
+                            params.channel_id as u32,
+                            &channel_map_bool_array,
+                            &remapping_table,
+                            nb_used,
+                        )
+                    ) {
                     match found_counter {
                         None => {
                             // the first one without inconsistency, save it
@@ -211,14 +201,16 @@ impl Iterator for ChmCombos {
         // It can move to the right if its current location is not equal to the highest position it could ever have,
         // Keeping in mind its highest location is the one were there are others (t) in front, and thus only t places to be filled in front of you.
         // Moving to the right any more would not leave room for one in front of you.
-        let rightmost_ok = (1..(self.nb_false_negatives - 1)).rev()
-            .find(|t| self.next_channel_map_combo[*t as usize] != self.nb_unused_seen - self.nb_false_negatives + *t).unwrap_or(0);
+        let rightmost_ok = (1..self.nb_false_negatives).rev()
+            .find(|t| 
+                self.next_channel_map_combo[*t as usize] != self.nb_unused_seen - self.nb_false_negatives + *t
+            ).unwrap_or(0);
         // Move it to the right
         self.next_channel_map_combo[rightmost_ok as usize] += 1;
         // All the one that are more to the right than this one, give them their starting position again, with the offset from the rightmost_ok
         ((rightmost_ok + 1)..self.nb_false_negatives).for_each(|i| 
             self.next_channel_map_combo[i as usize] = self.next_channel_map_combo[i as usize - 1] + 1);
-            
+        
         Some(ret)
     }
 } 
@@ -264,234 +256,15 @@ mod chm_combo_tests {
             panic!("{} {:?}", b, combinations)
         }
 
+        let mut rem = vec![];
         for my_chm in my_combo.into_iter() {
             assert!(chms.contains(&my_chm));
+            assert!(chms.iter().filter(|f| **f == my_chm).count() == 1);
             let pos = chms.iter().position(|v| *v == my_chm).unwrap();
             chms.remove(pos);
+            rem.push(my_chm)
         }
 
         assert!(chms.is_empty());
     }
 }
-
-/*
-    TODO the one from deduce before
-    fn brute_force_slice(parameters: &BruteForceParameters, sniffer_id: u8) -> CounterInterval {
-        // Final one will take care of rest
-        let interval_size = u16::MAX / (parameters.nb_sniffers as u16);
-        // Both are inclusive
-        let start = sniffer_id as u16 * interval_size;
-        let end = if sniffer_id == parameters.nb_sniffers - 1 {
-            u16::MAX
-        }
-        else {
-            (sniffer_id + 1) as u16 * interval_size - 1
-        };
-
-        let (channel_map_bool_array, remapping_table, _, nb_used) =
-            generate_channel_map_arrays(parameters.seen_channel_map);
-
-
-        let mut running_event_counter;
-
-        let mut found_counter: Option<u32> = None;
-        let mut inconsistency: bool;
-        for potential_counter in start..=end {
-            // reset inconsistency
-            inconsistency = false;
-            for (relative_counter, channel) in parameters.relative_counters_and_channels.iter() {
-                running_event_counter =  potential_counter.wrapping_add(*relative_counter);
-                let channel_potential_counter = csa2_no_subevent(
-                    running_event_counter as u32,
-                    parameters.channel_id as u32,
-                    &channel_map_bool_array,
-                    &remapping_table,
-                    nb_used,
-                );
-
-                // If we get another one than expected, go to next counter
-                if channel_potential_counter != *channel {
-                    inconsistency = true;
-                    break;
-                }
-            }
-
-            // If there was no inconsistency for this potential counter save it
-            if !inconsistency {
-                match found_counter {
-                    None => {
-                        // the first one without inconsistency, save it
-                        found_counter = Some(potential_counter as u32);
-                    }
-                    Some(_) => {
-                        // There was already another one without inconstistency, we have multiple solutions
-                        return CounterInterval::MultipleSolutions;
-                    }
-                }
-            }
-        }
-
-        // The fact we get here, we did not find mutliple solutions, must be one or none.
-        // Remember for exactly one you need to run through the whole range
-        match found_counter {
-            None => {
-                // There were no solutions
-                CounterInterval::NoSolutions
-            }
-            Some(counter) => 
-                CounterInterval::ExactlyOneSolution(counter as u16),
-        }
-    }
-
-    TODO the one from simulation
-
-#[allow(clippy::too_many_arguments)]
-fn brute_force(_extra_packets: u32 ,_bf_max: u64,actual_nb_used_debug :u8, actual_chm_debug : u64, actual_counter_debug : u16, packets : &[(u16, u8)], chm : u64, thresshold: f64, nb_events: u8, packet_loss: f64, channel_id: u16) -> (CounterInterval, u32) {
-    //if actual_nb_used_debug == 37 { println!("bf for {} {} {}", actual_nb_used_debug, actual_counter_debug, actual_chm_debug)};
-    let nb_unused_seen = (0u8..37).filter(|channel| chm & (1 << *channel) == 0).count() as u8;
-    // Get the false positives for which the chance of it occurring is above the thresshold
-    let likely_false_negatives = (0..=nb_unused_seen)
-        .filter(|fns| chance_and_combo_reality(nb_unused_seen, *fns,nb_events, 1.0 - packet_loss).0 >= thresshold).collect_vec();
-    if likely_false_negatives.is_empty() {
-        //if actual_nb_used_debug < 37 {
-        //    let t = (0..=nb_unused_seen)
-        //    .map(|fns| chance_and_combo_reality(nb_unused_seen, fns,nb_events, 1.0 - packet_loss).0 ).collect_vec();
-        //    t.iter().enumerate().for_each(|(l,d)| println!("{} {:.2}", *d, l));
-        //    println!("above thress = {:.2}", thresshold);
-        //    std::io::stdout().flush();
-        //    panic!("");
-        //}
-        return (CounterInterval::NoSolutions,0);
-    }
-        // TODO turn as much as you can of this into iterators so rust can optimise the hell out of it
-
-    let (channel_map_bool_array,_, _, _) =
-        generate_channel_map_arrays(chm);
-    let unused_channels = channel_map_bool_array.iter().enumerate().filter_map(|(channel, seen)| if !*seen {Some(channel as u8)} else {None}).collect_vec();
-    let mut nb_bfs = 0u32;
-    let result = likely_false_negatives.into_iter().map(|nb_false_negs| {
-        
-        //let nb_used = 37 - nb_unused_seen + nb_false_negs;
-        //let mut is_false_neg = unused_channels.iter().map(|_| false).collect_vec();
-        //is_false_neg.iter_mut().zip(0..nb_false_negs).for_each(|(is_false_neg, _)| *is_false_neg = true);
-        //let nb_unused = nb_unused_seen - nb_false_negs;
-        // permutation takes K elements from the iterator and gives a vector for each combination of k element of the iterator
-        // Taking nb_unused_seen - false_nges is same as deleting false_negs
-        let combinations = unused_channels.clone().into_iter().combinations(nb_false_negs as usize).collect_vec();
-        let chms = combinations.clone().into_iter().map(|to_flip| {
-        unused_channels.iter().fold(0x1F_FF_FF_FF_FFu64, |chm, channel|{
-                if !to_flip.contains(channel) {
-                    // turn of if now flipped to used
-                    chm & !(1 << *channel)
-                }
-                else {
-                    chm
-                }
-            })
-        }).collect_vec();
-        let _nb_u = actual_nb_used_debug;
-        let b = binomial(nb_unused_seen as u64, nb_false_negs as u64) as usize;
-        if b != chms.len() {
-            panic!("{} {:?}", b, combinations)
-        }
-        //let fn_solutions = 
-        chms.into_iter().map( |chm|{
-            let (channel_map_bool_array,remapping_table, _, nb_used) =  generate_channel_map_arrays(chm);
-
-            //nb_bfs += 1;
-            //if nb_bfs > bf_max as u32 {
-            //    panic!("More bfs than allowed")
-            //}
-            // now we have concrete channel map as before
-            let mut running_event_counter;
-
-            let mut found_counter: Option<u32> = None;
-            let mut inconsistency: bool;
-            for potential_counter in 0..=u16::MAX {
-                // reset inconsistency
-                inconsistency = false;
-                for (relative_counter, channel) in packets.iter() {
-                    running_event_counter =  potential_counter.wrapping_add(*relative_counter);
-                    let channel_potential_counter = csa2_no_subevent(
-                        running_event_counter as u32,
-                        channel_id as u32,
-                        &channel_map_bool_array,
-                        &remapping_table,
-                        nb_used,
-                    );
-
-                    // If we get another one than expected, go to next counter
-                    if channel_potential_counter != *channel {
-                        inconsistency = true;
-                        if potential_counter == actual_counter_debug && chm == actual_chm_debug {
-                            panic!("Correct counter and channel map but inconsistency")
-                        }
-                        break;
-                    }
-                }
-
-
-                // If there was no inconsistency for this potential counter save it
-                if !inconsistency {
-                    match found_counter {
-                        None => {
-                            // the first one without inconsistency, save it
-                            found_counter = Some(potential_counter as u32);
-                        }
-                        Some(_) => {
-                            // There was already another one without inconstistency, we have multiple solutions
-                            return CounterInterval::MultipleSolutions;
-                        }
-                    }
-                }
-            }
-
-            // The fact we get here, we did not find mutliple solutions, must be one or none.
-            // Remember for exactly one you need to run through the whole range
-            match found_counter {
-                None => {
-                    // There were no solutions
-                    if chm == actual_chm_debug {
-                        panic!("No solution but have actual channel map")
-                    }
-                    CounterInterval::NoSolutions
-                }
-                Some(counter) => 
-                    CounterInterval::ExactlyOneSolution(counter as u16, chm, 0),
-            }
-        })
-        //.collect_vec();
-        //(nb_false_negs, fn_solutions)
-    })//.collect_vec();
-    .flatten().inspect(|_| nb_bfs += 1).reduce(|a,b| { // IMPORTANT if 1 element this will give the 1 element => one solution stays one solution
-        match a {
-            CounterInterval::ExactlyOneSolution(ac, am, atodo) => {
-                match b {
-                    CounterInterval::ExactlyOneSolution(bc, bm, btodo) => {
-                        // now require them to be exactly the same -> Wrong e.g. 0 fns wont have this
-                        //assert!((*m).count_ones() <= tm.count_ones());
-                        if ac == bc  {
-                            // For same counters, or them = take union of used channels
-                            // Later on we will require the union to be exactly the same for all numbers of false positives
-                            // Remembers chm + the places where a 1 was turned into a 0
-                            let more_todo_from_both = am ^ bm;
-
-                            CounterInterval::ExactlyOneSolution(ac, am & bm,atodo | btodo | more_todo_from_both)
-                        }
-                        else {
-                            CounterInterval::MultipleSolutions
-                        }
-                    }
-                    CounterInterval::MultipleSolutions => {CounterInterval::MultipleSolutions}
-                    CounterInterval::NoSolutions => {a}
-                }
-            }
-            CounterInterval::MultipleSolutions => {CounterInterval::MultipleSolutions}
-            CounterInterval::NoSolutions => {b}
-        }
-    }).unwrap();
-
-    (result, nb_bfs)
-}
-
-*/
