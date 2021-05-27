@@ -21,7 +21,7 @@ doc = true             # Is documented by default.
 
 # TODO sync pool needs to dissapear for arm..
 [dependencies]
-heapless = { version = "0.7.0", features = ['serde']}
+heapless = { version = "0.7.1", features = ['serde']}
 #gcd = "2.0.1"
 serde = { version = "1.0.125", default-features = false }
 postcard = "0.7.0"
@@ -38,9 +38,34 @@ statrs = "0.13.0"
 itertools = { version="0.10.0"}
 rand = "0.8.3"
 rand_chacha = "0.3.0"
-#rayon = "1.5.0"
+rayon = "1.5.1"
+criterion = "0.3.4"
 
 # sync pool necessary for x86
 [target.x86_64-unknown-linux-gnu.dependencies]
-heapless = { version = "0.7.0", features = ['serde', 'x86-sync-pool']}
+heapless = { version = "0.7.1", features = ['serde', 'x86-sync-pool']}
 
+# tests take very long, see if this makes it better
+[profile.dev]
+opt-level = 1               # Use slightly better optimizations.
+overflow-checks = true     
+debug = 2
+debug-assertions = true
+incremental = true
+codegen-units = 256
+
+
+[profile.release]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = 'fat'
+incremental = false
+codegen-units = 16
+rpath = false
+
+# criterion bench, rust bench still unstable
+[[bench]]
+name = "main_benchmark"
+harness = false

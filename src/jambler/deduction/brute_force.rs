@@ -1,10 +1,11 @@
 
 
-use heapless::{Vec, pool::Box};
+use heapless::{Vec, pool::singleton::Box};
+
 
 use crate::ble_algorithms::csa2::{csa2_no_subevent, generate_channel_map_arrays};
 
-use super::{deducer::CounterInterval, distributions::prob_of_seeing_if_used};
+use super::{deducer::CounterInterval, distributions::prob_of_seeing_if_used, control::BruteForceParametersBox};
 
 
 
@@ -45,7 +46,7 @@ pub struct BruteForceResult {
 }
 
 
-pub fn brute_force(sniffer_id: u8, params: Box<BruteForceParameters>) -> BruteForceResult {
+pub fn brute_force(sniffer_id: u8, params: Box<BruteForceParametersBox>) -> BruteForceResult {
 
     // TODO for likely false negatives, take from 0..max because if your packet loss is less bad than expected
     // TODO this will result in no solution if your sniffer did capture all packets
@@ -180,6 +181,18 @@ impl Iterator for ChmCombos {
     /// We go RIGHT to LEFT over u64, thus stays the same!
     /// Position 0 is the lowest unused channel.
     fn next(&mut self) -> Option<Self::Item> {
+        // 0 false negatives edge case
+        if self.nb_false_negatives == 0 {
+            if self.nb_unused_seen != u8::MAX {
+                self.nb_unused_seen = u8::MAX;
+                return Some(self.seen_channel_map);
+            }
+            else {
+                return None
+            }
+        }
+
+
         // Stop when rightmost would have to be one more than the number unused seen -> it would have to be bumped out -> stop
         if self.next_channel_map_combo[self.nb_false_negatives as usize - 1] >= self.nb_unused_seen {
             return None;
@@ -266,5 +279,377 @@ mod chm_combo_tests {
         }
 
         assert!(chms.is_empty());
+    }
+}
+
+
+#[cfg(test)]
+mod brute_force_tests {
+
+    use core::mem::MaybeUninit;
+    use std::vec::Vec;
+    use std::iter::Iterator;
+    use heapless::pool::Node;
+    use heapless::pool::singleton::Pool;
+    //use itertools::Itertools;
+    use crate::jambler::deduction::brute_force::BruteForceParameters;
+    use crate::jambler::deduction::brute_force::brute_force;
+    use crate::jambler::deduction::deducer::CounterInterval::{self, *};
+    use crate::jambler::deduction::control::BruteForceParametersBox;
+    use rayon::prelude::*;
+
+
+    #[test]
+    fn bf_1() {
+        let channel_id : u16 = 55578;
+        let chm : u64 = 101668861912;
+        let threshold : f32 = 0.1;
+        let nb_events : u16 = 82;
+        let packet_loss : f32 = 0.1;
+        let nb_used : u8 = 32;
+        let packets : Vec<(u16, u8)> = vec![(0, 31), (119, 21), (133, 32), (360, 34), (374, 8), (387, 6), (430, 4), (559, 10), (600, 22), (654, 25), (719, 15), (730, 29), (744, 13), (756, 12), (784, 36), (826, 16), (831, 23), (922, 18), (1102, 7), (1204, 24), (1382, 27), (1393, 9), (1405, 33), (1474, 17), (1486, 3), (1609, 19)];
+        //let result : CounterInterval = ExactlyOneSolution(61381, 118648434557, 17716777090);
+        let result : CounterInterval = ExactlyOneSolution(16570, 101668861912, 35501656103);
+
+        const NB_SNIFFERS : u8 = 5;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
+
+    }
+
+
+    #[test]
+    fn bf_2() {
+        let channel_id : u16 = 62589;
+        let chm_seen : u64 = 51505052911;
+        let threshold : f32 = 0.1;
+        let nb_events : u16 = 148;
+        let packet_loss : f32 = 0.5;
+        let nb_used : u8 = 37;
+        let packets : Vec<(u16, u8)> = vec![(0, 29), (2, 35), (166, 26), (321, 0), (361, 2), (447, 27), (725, 1), (926, 20), (930, 10), (1107, 22), (1153, 24), (1269, 12), (1362, 21), (1411, 31), (1464, 11), (1471, 13), (1513, 5), (2079, 15), (2399, 33), (2441, 6), (2514, 32), (2619, 30), (2800, 7), (2831, 23), (2851, 3), (2996, 28)];
+        let result : CounterInterval = ExactlyOneSolution(31250, 51505052911, 85933900560);
+
+
+        const NB_SNIFFERS : u8 = 10;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm_seen,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
+
+    }
+
+
+    #[test]
+    fn bf_3() {
+        let channel_id : u16 = 48534;
+        let chm_seen : u64 = 135288843775;
+        let threshold : f32 = 0.1;
+        let nb_events : u16 = 148;
+        let packet_loss : f32 = 0.5;
+        let nb_used : u8 = 36;
+        let packets : Vec<(u16, u8)> = vec![(0, 18), (47, 24), (142, 30), (174, 0), (601, 20), (603, 7), (628, 32), (699, 25), (721, 34), (858, 27), (874, 17), (886, 33), (996, 8), (1185, 11), (1196, 28), (1233, 2), (1372, 15), (1404, 10), (1516, 6), (1568, 22), (1615, 35), (1684, 13), (1793, 3), (1810, 16), (1864, 5), (2027, 26), (2226, 1), (2263, 29), (2366, 36), (2461, 14), (2467, 4), (2485, 23)];
+        let result : CounterInterval = ExactlyOneSolution(12093, 135288843775, 2150109696);
+
+
+        const NB_SNIFFERS : u8 = 10;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm_seen,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
+
+    }
+
+
+    #[test]
+    fn bf_4() {
+        let channel_id : u16 = 51945;
+        let chm_seen : u64 = 134003151871;
+        let threshold : f32 = 0.02;
+        let nb_events : u16 = 103;
+        let packet_loss : f32 = 0.3;
+        let nb_used : u8 = 28;
+        let packets : Vec<(u16, u8)> = vec![(0, 33), (313, 3), (315, 36), (325, 16), (423, 24), (441, 12), (480, 28), (509, 34), (683, 18), (684, 2), (835, 20), (841, 21), (886, 25), (910, 6), (914, 14), (940, 35), (1026, 29), (1111, 32), (1147, 0), (1268, 4), (1510, 7), (1548, 5), (1551, 15), (1565, 8), (1587, 9), (1601, 1)];
+        let result : CounterInterval = ExactlyOneSolution(39654, 134003151871, 3368036352);
+
+
+        const NB_SNIFFERS : u8 = 10;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm_seen,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
+
+    }
+
+
+    #[test]
+    fn bf_5() {
+        let channel_id : u16 = 22210;
+        let chm_seen : u64 = 65925207927;
+        let threshold : f32 = 0.02;
+        let nb_events : u16 = 103;
+        let packet_loss : f32 = 0.3;
+        let nb_used : u8 = 28;
+        let packets : Vec<(u16, u8)> = vec![(0, 2), (27, 33), (51, 28), (52, 21), (106, 10), (118, 20), (125, 27), (207, 34), (376, 22), (408, 17), (616, 14), (721, 0), (756, 12), (820, 8), (863, 5), (888, 15), (1034, 24), (1191, 35), (1209, 4), (1216, 6), (1324, 32), (1579, 30), (1716, 1), (1727, 9)];
+        let result : CounterInterval = ExactlyOneSolution(63549, 65925207927, 2249009280);
+
+
+        const NB_SNIFFERS : u8 = 10;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm_seen,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
+
+    }
+
+
+    #[test]
+    fn bf_6() {
+        let channel_id : u16 = 19584;
+        let chm_seen : u64 = 91586754293;
+        let threshold : f32 = 0.02;
+        let nb_events : u16 = 103;
+        let packet_loss : f32 = 0.3;
+        let nb_used : u8 = 28;
+        let packets : Vec<(u16, u8)> = vec![(0, 20), (138, 15), (320, 25), (353, 21), (356, 0), (433, 4), (716, 30), (717, 7), (736, 28), (739, 23), (748, 5), (750, 22), (1269, 36), (1279, 2), (1340, 34), (1502, 18), (1526, 9), (1538, 13), (1606, 32), (1632, 10), (1670, 17), (1885, 6), (1922, 12), (1933, 14), (1942, 19)];
+        let result : CounterInterval = ExactlyOneSolution(43103, 91586754293, 37128046858);
+
+
+        const NB_SNIFFERS : u8 = 10;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm_seen,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
+
+    }
+
+    #[test]
+    fn bf_7() {
+        let channel_id : u16 = 55911;
+        let chm_seen : u64 = 66027939687;
+        let threshold : f32 = 0.02;
+        let nb_events : u16 = 103;
+        let packet_loss : f32 = 0.3;
+        let nb_used : u8 = 28;
+        let packets : Vec<(u16, u8)> = vec![(0, 0), (14, 1), (53, 23), (91, 5), (98, 27), (126, 32), (168, 17), (205, 33), (216, 2), (222, 24), (257, 35), (464, 20), (593, 8), (672, 26), (691, 30), (833, 9), (863, 13), (1075, 28), (1241, 25), (1559, 6), (1568, 10), (1757, 14), (1814, 34)];
+        let result : CounterInterval = ExactlyOneSolution(25145, 66027939687, 2691008640);
+
+
+        const NB_SNIFFERS : u8 = 10;
+        let version = 0;
+
+        let params = BruteForceParameters {
+            seen_channel_map: chm_seen,
+            channel_id,
+            version,
+            nb_sniffers: NB_SNIFFERS,
+            threshold,
+            nb_events,
+            packet_loss,
+            relative_counters_and_channels: packets.into_iter().collect(),
+        };
+
+        // Create heap for params
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let results = (0..NB_SNIFFERS).into_par_iter()
+        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .collect::<Vec<_>>();
+
+        assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
+
+        let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();
+        assert_eq!(nb_exactly_one, 1);
+
+
+        let nb_no_sol = results.iter().filter(|r| matches!(r.result, NoSolutions)).count();
+        assert_eq!(nb_no_sol, NB_SNIFFERS as usize - 1);
+
+        let bf_result = results.into_iter().find(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).unwrap();
+
+        assert_eq!(bf_result.result, result);
+
     }
 }
