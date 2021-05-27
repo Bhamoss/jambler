@@ -9,7 +9,7 @@ use super::{deducer::CounterInterval, distributions::prob_of_seeing_if_used, con
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Will be broadcast over i2c for distributed brute forcing.
 pub struct BruteForceParameters {
     pub seen_channel_map: u64,
@@ -38,7 +38,7 @@ impl Default for BruteForceParameters {
     }
 }
 
-
+#[derive(Debug, PartialEq)]
 pub struct BruteForceResult {
     pub slave_id: u8,
     pub version: u8,

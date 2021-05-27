@@ -655,7 +655,7 @@ impl core::fmt::Debug for JamblerReturn {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BlePhy {
     Uncoded1M,
     Uncoded2M,

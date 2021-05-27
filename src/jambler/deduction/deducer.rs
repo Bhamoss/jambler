@@ -12,7 +12,7 @@ use heapless::{ Vec, pool::{ singleton::{Box, Pool}}, spsc::{Consumer, Producer}
 /********************* INTERNAL DEDUCTION STRUCT HELPERS *********************************/
 
 /// Current state of discovering channels
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum ChannelMapEntry {
     Unknown,
     /// unused will be overwritten by used no matter what
@@ -36,6 +36,7 @@ pub enum CounterInterval {
 }
 
 
+#[derive(Debug, PartialEq)]
 pub struct UnsureChannelEvent {
     pub channel: u8,
     pub time: u64,
@@ -44,7 +45,7 @@ pub struct UnsureChannelEvent {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 /// A struct holding all important information a subevent can hold for reversing the parameters of a connection.
 pub struct ConnectionSample {
     pub slave_id: u8,
@@ -55,14 +56,14 @@ pub struct ConnectionSample {
     pub response: Option<ConnectionSamplePacket>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct UnusedChannel {
     pub channel: u8,
-    pub next_channel: u8,
     pub sniffer_id: u8
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 /// Holds all information a packet belonging to a subevent can hold
 pub struct ConnectionSamplePacket {
     /// The first header byte, holding important flags for helping determine if this was an anchorpoint or not
@@ -77,7 +78,7 @@ pub struct ConnectionSamplePacket {
 }
 
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 pub struct DeducedParameters {
     pub access_address : u32,
     pub master_phy : BlePhy,
@@ -91,7 +92,7 @@ pub struct DeducedParameters {
 
 
 /// Anchorpoint ordered on the time it was caught.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnchorPoint {
     /// The absolute time the anchorpoint was caught as a multiple of 1250. 2**16*1250 longer than 4_000_000
     pub channel: u8,
@@ -99,7 +100,7 @@ pub struct AnchorPoint {
 }
 
 /// Necessary information to start deduction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeductionStartParameters {
     access_address : u32,
     master_phy : BlePhy,
@@ -130,6 +131,7 @@ impl Default for DeductionStartParameters {
 }
 
 /// Interval state when processing.
+#[derive(Debug, PartialEq)]
 struct ProcessingState {
     params: BruteForceParameters,
     drift: i32,
@@ -208,6 +210,38 @@ pub struct DeductionState<'a> {
     brute_force_result_queue : Consumer<'a, BruteForceResult,16>,
     unsure_channel_queue : Consumer<'a, UnsureChannelEvent,16>,
 }
+impl<'a> Debug for DeductionState<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("state: {:?}\nstart_parameters: {:?}\ncapture_chance: {:?}\nsilence_time: {:?}\ntime_to_switch: {:?}\nrecents_connection_samples: {:?}\ncrc_init: {:?}\nanchor_points: {:?}\nnb_packets_first_single_interval: {:?}\nnb_durations_gcd_thres: {:?}\nconnection_interval: {:?}\nchannel_map: {:?}\nfn_chance_threshold: {:?}\nchm_nb_events_waited: {:?}\nprocessing_state: {:?}\ntotal_packets: {:?}\nfound_counter: {:?}\nfound_time: {:?}\nfound_chm_unsure: {:?}\nunsure_channels_remaining_occurrences: {:?}",
+        self.state, self.start_parameters, self.capture_chance, self.silence_time, self.time_to_switch, self.recents_connection_samples, self.crc_init, self.anchor_points, self.nb_packets_first_single_interval, self.nb_durations_gcd_thres, self.connection_interval, self.channel_map, self.fn_chance_threshold, self.chm_nb_events_waited, self.processing_state, self.total_packets, self.found_counter, self.found_time, self.found_chm_unsure, self.unsure_channels_remaining_occurrences
+    ))
+    }
+}
+impl<'a> PartialEq for DeductionState<'a> {
+    /// Compare all except queues which you can't compare.
+    fn eq(&self, other: &Self) -> bool {
+        self.state == other.state &&
+        self.start_parameters == other.start_parameters &&
+        self.capture_chance == other.capture_chance &&
+        self.silence_time == other.silence_time &&
+        self.time_to_switch == other.time_to_switch &&
+        self.recents_connection_samples == other.recents_connection_samples &&
+        self.crc_init == other.crc_init &&
+        self.anchor_points == other.anchor_points &&
+        self.nb_packets_first_single_interval  == other.nb_packets_first_single_interval &&
+        self.nb_durations_gcd_thres  == other.nb_durations_gcd_thres &&
+        self.connection_interval  == other.connection_interval &&
+        self.channel_map == other.channel_map &&
+        self.fn_chance_threshold == other.fn_chance_threshold &&
+        self.chm_nb_events_waited  == other.chm_nb_events_waited &&
+        self.processing_state == other.processing_state &&
+        self.total_packets == other.total_packets &&
+        self.found_counter == other.found_counter &&
+        self.found_time == other.found_time &&
+        self.found_chm_unsure == other.found_chm_unsure &&
+        self.unsure_channels_remaining_occurrences  == other.unsure_channels_remaining_occurrences 
+    }
+}
 
 impl<'a> DeductionState<'a> {
     /// Used for initialising the static variable
@@ -223,7 +257,7 @@ impl<'a> DeductionState<'a> {
             state: State::Idle,
             channel_map: [ChannelMapEntry::Unknown; 37],
             fn_chance_threshold: f32::MAX,
-            chm_nb_events_waited : u16::MAX,
+            chm_nb_events_waited : 0,
             capture_chance: 0.0,
             crc_init: core::u32::MAX,
             time_to_switch: u32::MAX,
@@ -274,13 +308,14 @@ impl<'a> DeductionState<'a> {
 
 
         self.found_counter = 0;
-        self.found_time = u64::MAX;
+        self.found_time = 0;
         self.found_chm_unsure = 0;
         self.unsure_channels_remaining_occurrences = [0u8;37];
 
         // Start parameters and state will just be overwritten when we get to their state.
         // They are large, waste no time
-
+        self.start_parameters = DeductionStartParameters::default();
+        self.processing_state = ProcessingState::default();
 
 
         if was_reset_command {
@@ -505,7 +540,7 @@ impl<'a> DeductionState<'a> {
                         } else {None}) // Packet loss only! 
                     .sum::<u32>()
                 ).max().unwrap();
-                nbu > (self.start_parameters.max_brute_forces as u32)
+                nbu <= (self.start_parameters.max_brute_forces as u32)
             });
  
              // You are given valid brute force thresholds, which go lower and lower. 
@@ -521,7 +556,7 @@ impl<'a> DeductionState<'a> {
                                 )
                          .filter(|fn_chance| *fn_chance < *thresshold).sum::<f32>()
                      ).reduce(|a,b| if a > b {a} else {b}).unwrap();
-                     err <= self.start_parameters.channel_map_success_rate
+                     err <= 1.0 - self.start_parameters.channel_map_success_rate
              });
              found.map(|thress| (nb_events, thress))
          }).next();
@@ -634,7 +669,7 @@ impl<'a> DeductionState<'a> {
                 (event_counter_diff, time_delta as i32 - rounded as i32, w[1].channel)
             })
             .fold((0i32, 0u16), |(drift, running_counter),(delta_events, new_drift, channel)|{
-                bps.relative_counters_and_channels.push((running_counter, channel)).unwrap();
+                bps.relative_counters_and_channels.push((running_counter + delta_events, channel)).unwrap();
                 (drift + new_drift, running_counter + delta_events)
             });
 
@@ -875,5 +910,506 @@ mod deducer_helper_tests {
         let target = vec![phy_to_max_time(&BlePhy::Uncoded1M), phy_to_max_time(&BlePhy::Uncoded2M), phy_to_max_time(&BlePhy::CodedS2), phy_to_max_time(&BlePhy::CodedS8)];
         target.iter().combinations(2).for_each(|d| assert_ne!(*d[0], *d[1]));
         assert_eq!(target[1], 2128 / 2 + 4);
+    }
+}
+
+
+#[cfg(test)]
+mod deducer_tests {
+    use core::mem::MaybeUninit;
+
+    use crate::jambler::deduction::{brute_force::brute_force, control::{DeductionQueueStore, DpBuf, BfpBuf}};
+    use super::CounterInterval::{self, *};
+    use std::vec::Vec;
+    use super::*;
+    use heapless::pool::Node;
+    use itertools::Itertools;
+    use rand::{Rng, RngCore, prelude::SliceRandom, thread_rng};
+    
+
+    #[test]
+    fn deducer_start_reset() {
+
+        static mut DP_BUF: DpBuf = MaybeUninit::uninit();
+        static mut BFP_BUF: BfpBuf = MaybeUninit::uninit();
+        let mut store = DeductionQueueStore::new();
+        let (mut control,mut state) = unsafe{store.split(&mut DP_BUF, &mut BFP_BUF)};
+
+        // Put some packets in the state buffers, they need to get flushed
+        control.send_connection_sample(ConnectionSample{ slave_id: 1, channel: 2, time: 3, silence_time_on_channel: 4, packet: ConnectionSamplePacket{ first_header_byte: 5, reversed_crc_init: 6, phy: BlePhy::Uncoded1M, rssi: 7 }, response: None });
+        control.send_unused_channel(UnusedChannel{ channel: 1,  sniffer_id: 3 });
+        control.send_brute_force_result(BruteForceResult{ slave_id: 1, version: 2, result: CounterInterval::NoSolutions });
+        control.send_unsure_channel_event(UnsureChannelEvent{ channel: 1, time: 2, event_counter: 3, seen: false });
+
+
+        let start_params = DeductionStartParameters {
+            access_address: 0x8E89BED6,
+            master_phy: BlePhy::CodedS8,
+            slave_phy: BlePhy::CodedS8,
+            packet_loss: 0.4,
+            nb_sniffers: 10,
+            conn_interval_success_rate: 0.9,
+            channel_map_success_rate: 0.9,
+            anchor_point_success_rate: 0.95,
+            silence_percentage: 0.05,
+            max_brute_forces: 100,
+        };
+
+        // Start and let deducer do 2 loop
+        control.start(start_params);
+        assert_eq!((true, true), state.deduction_loop());
+        assert_eq!((false, false), state.deduction_loop());
+
+        // check control request queue for correct values
+        let request = control.get_deducer_request();
+        assert!(request.is_some());
+        assert!(control.get_deducer_request().is_none());
+        let request = request.unwrap();
+        let t = state.time_to_switch;
+        assert!(matches!(request, DeducerToMaster::SearchPacketsForCrcInit(t))); 
+
+        // check deducer state
+        assert_eq!(start_params, state.start_parameters);
+        assert!(matches!(state.state, State::DeduceCrcInit));
+        assert!((state.capture_chance - 0.154_054_06).abs() < 0.0001);
+        assert_eq!(state.silence_time, 137728);
+        assert_eq!(state.time_to_switch, 2754560);
+
+        assert!(state.sample_queue.dequeue().is_none());
+        assert!(state.unused_queue.dequeue().is_none());
+        assert!(state.brute_force_result_queue.dequeue().is_none());
+        assert!(state.unsure_channel_queue.dequeue().is_none());
+
+        // Test reset
+        control.reset();
+        assert_eq!((false, false), state.deduction_loop());
+        assert!(control.get_deducer_request().is_none());
+        static mut DP_BUF2: DpBuf = MaybeUninit::uninit();
+        static mut BFP_BUF2: BfpBuf = MaybeUninit::uninit();
+        let mut store2 = DeductionQueueStore::new();
+        let (_, state2) = unsafe{store2.split(&mut DP_BUF, &mut BFP_BUF)};
+        assert_eq!(state2, state);
+
+        // Do 2 more initial calculation tests
+        let start_params = DeductionStartParameters {
+            access_address: 0x8E89BED6,
+            master_phy: BlePhy::Uncoded1M,
+            slave_phy: BlePhy::CodedS2,
+            packet_loss: 0.2,
+            nb_sniffers: 5,
+            conn_interval_success_rate: 0.9,
+            channel_map_success_rate: 0.9,
+            anchor_point_success_rate: 0.9,
+            silence_percentage: 0.05,
+            max_brute_forces: 100,
+        };
+        control.start(start_params);
+        assert_eq!((true, true), state.deduction_loop());
+        assert!((state.capture_chance - 0.102_702_7).abs() < 0.0001);
+        assert_eq!(state.silence_time, 14044);
+        assert_eq!(state.time_to_switch, 280880);
+        let start_params = DeductionStartParameters {
+            access_address: 0x8E89BED6,
+            master_phy: BlePhy::Uncoded1M,
+            slave_phy: BlePhy::CodedS2,
+            packet_loss: 0.2,
+            nb_sniffers: 1,
+            conn_interval_success_rate: 0.9,
+            channel_map_success_rate: 0.9,
+            anchor_point_success_rate: 0.9,
+            silence_percentage: 0.2,
+            max_brute_forces: 100,
+        };
+        control.start(start_params);
+        assert_eq!((true, true), state.deduction_loop());
+        assert!((state.capture_chance - 0.017_297_298).abs() < 0.0001);
+        assert_eq!(state.silence_time, 14044);
+        assert_eq!(state.time_to_switch, 70220);
+    }
+
+    fn durations_to_samples(mut durations: Vec<u32>, not_anchors: u8, crc_init: u32, state: &DeductionState) -> Vec<ConnectionSample> {
+        let mut running_time = 12345;
+        durations.insert(0, 0); // To add a first packet
+        let mut samples = durations.into_iter().enumerate().map(|(idx, d)|
+            {
+                running_time += d as u64;
+                ConnectionSample {
+                slave_id: 0,
+                channel: (idx as u8) % 37,
+                time: running_time,
+                silence_time_on_channel: state.silence_time + 1,
+                packet: ConnectionSamplePacket {
+                    first_header_byte: idx as u8,
+                    reversed_crc_init: crc_init,
+                    phy: state.start_parameters.master_phy,
+                    rssi: -27,
+                },
+                response: None,
+            }}
+        ).collect_vec();
+
+        let mut bad_samples = (0..not_anchors).map(|idx|
+            {
+                ConnectionSample {
+                slave_id: 0,
+                channel: (idx as u8) % 37,
+                time: idx as u64,
+                silence_time_on_channel: if idx % 2 != 0 {state.silence_time + 1} else {state.silence_time - 1},
+                packet: ConnectionSamplePacket {
+                    first_header_byte: idx as u8,
+                    reversed_crc_init: if idx % 2 == 0  {crc_init} else {thread_rng().next_u64() as u32 & 0xFF_FF_FF},
+                    phy: state.start_parameters.master_phy,
+                    rssi: -27,
+                },
+                response: None,
+            }}
+        ).collect_vec();
+
+        let l = samples.pop().unwrap();
+        samples.append(&mut bad_samples);
+        samples.push(l);
+
+        samples
+    }
+
+    #[test]
+    fn deducer_conn_interval_gcd() {
+
+        static mut DP_BUF: DpBuf = MaybeUninit::uninit();
+        static mut BFP_BUF: BfpBuf = MaybeUninit::uninit();
+        let mut store = DeductionQueueStore::new();
+        let (mut control,mut state) = unsafe{store.split(&mut DP_BUF, &mut BFP_BUF)};
+
+        // Gcd solutions but with 1 above thresshold = 7 durations
+        const SUCCESS_RATE: f32 = 0.91;
+        let conn_interval : u32 = 57500;
+        let capture_chance : f32 = 0.2;
+        let nb_packets_first_single_interval : u32 = 11 + 1; // IMPORTANT -> simulation says duration, not packets
+        let nb_durations_gcd_thres : u32 = 6;
+        let durations : Vec<u32> = vec![115001, 402485, 287511, 115007, 230013, 1264996, 344989];
+
+        // Put state right
+        let start_params = DeductionStartParameters {
+            access_address: 0x8E89BED6,
+            master_phy: BlePhy::Uncoded2M,
+            slave_phy: BlePhy::Uncoded2M,
+            packet_loss: 0.4,
+            nb_sniffers: 10,
+            conn_interval_success_rate: SUCCESS_RATE, 
+            channel_map_success_rate: 0.9,
+            anchor_point_success_rate: 0.95,
+            silence_percentage: 0.05,
+            max_brute_forces: 100,
+        };
+        state.start_parameters = start_params;
+        state.state = State::DeduceCrcInit;
+        state.capture_chance = capture_chance;
+        state.silence_time = 100;
+
+        let not_anchors = 2;
+        let crc_init = 0x53426;
+
+        let mut samples = durations_to_samples(durations.clone(), not_anchors, crc_init, &state);
+        let ch = samples.iter().filter(|s| s.silence_time_on_channel > state.silence_time).fold(0u64, |c,s| c | (1<<s.channel));
+        let nb_samples = samples.len();
+        let last_one = samples.pop().unwrap();
+
+        // To check if anchor points sort well
+        samples.shuffle(&mut thread_rng());
+
+        samples.into_iter().for_each(|s| control.send_connection_sample(s));
+        assert_eq!((true,false), state.deduction_loop());
+        let request = control.get_deducer_request().unwrap();
+        assert!(control.get_deducer_request().is_none());
+        let t = state.time_to_switch;
+        assert!(matches!(request, DeducerToMaster::SearchPacketsForConnInterval(t, crc_init, _)));
+
+        assert_eq!(state.crc_init, crc_init);
+        assert_eq!(state.nb_packets_first_single_interval, nb_packets_first_single_interval);
+        assert_eq!(state.nb_durations_gcd_thres, nb_durations_gcd_thres);
+        assert!(matches!(state.state, State::RecoverConnInterval));
+        assert_eq!(state.anchor_points.len(), nb_samples - 1 - not_anchors as usize);
+        assert_eq!((false,false), state.deduction_loop());
+        control.send_connection_sample(last_one);
+        assert_eq!((true,false), state.deduction_loop());
+
+        let request = control.get_deducer_request().unwrap();
+        assert!(control.get_deducer_request().is_none());
+        assert!(matches!(state.state, State::RecoveringChannelMap));
+        assert_eq!(state.anchor_points.len(), nb_samples - not_anchors as usize);
+        assert_eq!(state.connection_interval, conn_interval);
+        assert!(matches!(request, DeducerToMaster::StartChannelMap(_, ch,crc_init)));
+
+        // Time to listen etc... is channel map work
+        assert_eq!(state.total_packets as usize, durations.len() + 1 + not_anchors as usize);
+        assert!(state.anchor_points.as_slice().windows(2).all(|w| w[0].time <= w[1].time));
+
+    }
+
+
+    #[test]
+    fn deducer_conn_interval_first_occ() {
+
+        static mut DP_BUF: DpBuf = MaybeUninit::uninit();
+        static mut BFP_BUF: BfpBuf = MaybeUninit::uninit();
+        let mut store = DeductionQueueStore::new();
+        let (mut control,mut state) = unsafe{store.split(&mut DP_BUF, &mut BFP_BUF)};
+
+        // Gcd solutions but with 1 above thresshold = 7 durations
+        const SUCCESS_RATE: f32 = 0.91;
+        let conn_interval : u32 = 2507500;
+        let capture_chance : f32 = 0.2;
+        let nb_packets_first_single_interval : u32 = 11 + 1;
+        let nb_durations_gcd_thres : u32 = 6;
+        let durations : Vec<u32> = vec![10029684, 10030045, 5014813, 2507388, 5015059, 5014836, 5014831, 2507317, 35105237, 12537508, 17552124];
+
+        // Put state right
+        let start_params = DeductionStartParameters {
+            access_address: 0x8E89BED6,
+            master_phy: BlePhy::Uncoded2M,
+            slave_phy: BlePhy::Uncoded2M,
+            packet_loss: 0.4,
+            nb_sniffers: 10,
+            conn_interval_success_rate: SUCCESS_RATE, 
+            channel_map_success_rate: 0.9,
+            anchor_point_success_rate: 0.95,
+            silence_percentage: 0.05,
+            max_brute_forces: 100,
+        };
+        state.start_parameters = start_params;
+        state.state = State::DeduceCrcInit;
+        state.capture_chance = capture_chance;
+        state.silence_time = 100;
+
+        let not_anchors = 2;
+        let crc_init = 0x53426;
+
+        let mut samples = durations_to_samples(durations.clone(), not_anchors, crc_init, &state);
+        let ch = samples.iter().filter(|s| s.silence_time_on_channel > state.silence_time).fold(0u64, |c,s| c | (1<<s.channel));
+        let nb_samples = samples.len();
+        let last_one = samples.pop().unwrap();
+        // To check if anchor points sort well
+        samples.shuffle(&mut thread_rng());
+        // IMPORTANT recent samples queue is max len 10
+        let df = samples.drain(9..).collect_vec();
+        samples.into_iter().for_each(|s| control.send_connection_sample(s));
+        assert_eq!((true,false), state.deduction_loop());
+        df.into_iter().for_each(|s| control.send_connection_sample(s));
+        assert_eq!((false,false), state.deduction_loop());
+        let request = control.get_deducer_request().unwrap();
+        assert!(control.get_deducer_request().is_none());
+        let t = state.time_to_switch;
+        assert!(matches!(request, DeducerToMaster::SearchPacketsForConnInterval(t, crc_init, _)));
+
+        assert_eq!(state.crc_init, crc_init);
+        assert_eq!(state.nb_packets_first_single_interval, nb_packets_first_single_interval);
+        assert_eq!(state.nb_durations_gcd_thres, nb_durations_gcd_thres);
+        assert!(matches!(state.state, State::RecoverConnInterval));
+        assert_eq!(state.anchor_points.len(), nb_samples - 1 - not_anchors as usize);
+        assert_eq!((false,false), state.deduction_loop());
+        control.send_connection_sample(last_one);
+        assert_eq!((true,false), state.deduction_loop());
+
+        let request = control.get_deducer_request().unwrap();
+        assert!(control.get_deducer_request().is_none());
+        assert!(matches!(state.state, State::RecoveringChannelMap));
+        assert_eq!(state.anchor_points.len(), nb_samples - not_anchors as usize);
+        assert_eq!(state.connection_interval, conn_interval);
+        assert!(matches!(request, DeducerToMaster::StartChannelMap(_, ch,crc_init)));
+
+        // Time to listen etc... is channel map work
+        assert_eq!(state.total_packets as usize, durations.len() + 1 + not_anchors as usize);
+        assert!(state.anchor_points.as_slice().windows(2).all(|w| w[0].time <= w[1].time));
+
+    }
+
+    fn packets_to_samples(packets: Vec<(u16, u8)>, state: &DeductionState) -> (Vec<ConnectionSample>, u64) {
+        let start_time = 12345;
+        let last = packets.iter().map(|p| p.0).max().unwrap();
+        let samples = packets.into_iter().map(|(rel_event, channel)|
+            {
+                let running_time = start_time + (rel_event as u64 * state.connection_interval as u64) ;
+                ConnectionSample {
+                slave_id: 0,
+                channel,
+                time: running_time,
+                silence_time_on_channel: state.silence_time + 1,
+                packet: ConnectionSamplePacket {
+                    first_header_byte: 0,
+                    reversed_crc_init: state.crc_init,
+                    phy: state.start_parameters.master_phy,
+                    rssi: -27,
+                },
+                response: None,
+            }}
+        ).collect_vec();
+        (samples, start_time + last as u64 * state.connection_interval as u64)
+    }
+
+    #[test]
+    fn deducer_conn_chm_bf_unsure() {
+        static mut DP_BUF: DpBuf = MaybeUninit::uninit();
+        static mut BFP_BUF: BfpBuf = MaybeUninit::uninit();
+        let mut store = DeductionQueueStore::new();
+        let (mut control,mut state) = unsafe{store.split(&mut DP_BUF, &mut BFP_BUF)};
+
+
+        let channel_id : u16 = 15759;
+        let seen_channel_map : u64 = 116786200309;
+        let threshold : f32 = 0.04;
+        let nb_events : u16 = 160;
+        let packet_loss_bf : f32 = 0.3;
+        let nb_used : u8 = 28;
+        let packets : Vec<(u16, u8)> = vec![(0, 7), (325, 5), (362, 29), (364, 23), (390, 10), (393, 4), (715, 22), (731, 0), (808, 2), (1291, 28), (1318, 20), (1415, 18), (1424, 9), (1519, 12), (1556, 16), (1576, 13), (1623, 11), (1684, 14), (1693, 32), (1743, 15), (1746, 21), (1748, 19), (1783, 36), (1921, 33), (1950, 17), (2120, 6), (2123, 35)];
+        let result : CounterInterval = ExactlyOneSolution(57108, 116786200309, 20652753162);
+
+        let bfs_max = 100;
+        let chm = 116786200317u64;
+        let nb_used_observed = 27;
+        let real_nb_fns = 1;
+        let max_error = 0.05f32;
+        let real_counter = 57108u16;
+        let last_event = 57108u16.wrapping_add(2123) ;
+
+
+        // Gcd solutions but with 1 above thresshold = 7 durations
+        const SUCCESS_RATE: f32 = 0.91;
+        const NB_SNIFFERS: u8 = 10;
+        let conn_interval : u32 = 2507500;
+        let capture_chance : f32 = 0.2;
+        let nb_packets_first_single_interval : u32 = 11 + 1;
+        let nb_durations_gcd_thres : u32 = 6;
+        let durations : Vec<u32> = vec![10029684, 10030045, 5014813, 2507388, 5015059, 5014836, 5014831, 2507317, 35105237, 12537508, 17552124];
+
+        // Put state right
+        let start_params = DeductionStartParameters {
+            access_address: 15759,
+            master_phy: BlePhy::Uncoded2M,
+            slave_phy: BlePhy::Uncoded2M,
+            packet_loss: packet_loss_bf,
+            nb_sniffers: NB_SNIFFERS,
+            conn_interval_success_rate: SUCCESS_RATE, 
+            channel_map_success_rate: 1.0 - max_error,
+            anchor_point_success_rate: 0.95,
+            silence_percentage: 0.05,
+            max_brute_forces: bfs_max,
+        };
+        state.start_parameters = start_params;
+        state.state = State::RecoveringChannelMap;
+        state.capture_chance = capture_chance;
+        state.silence_time = 100;
+        state.connection_interval = conn_interval;
+        state.crc_init = 0x53426;
+
+        assert_eq!(calculate_channel_identifier(state.start_parameters.access_address), channel_id);
+
+        let (mut samples, last_time) = packets_to_samples(packets.clone(), &state);
+        let mut unused_rep = (0u8..37).filter(|c| samples.iter().all(|p| p.channel != *c)).map(|c| UnusedChannel { channel: c, sniffer_id: 0 }).collect_vec();
+
+        let used = packets.iter().map(|p| p.1).unique().collect_vec();
+        let unused = unused_rep.iter().map(|p| p.channel).unique().collect_vec();
+
+        let time_to_listen = state.calculate_time_to_listen();
+
+        assert_eq!(state.chm_nb_events_waited, nb_events);
+        assert!((state.fn_chance_threshold - threshold).abs() < 0.0001);
+        assert_eq!(time_to_listen, (nb_events as f32 * conn_interval as f32 * (1.0 + 520.0/1_000_000.0)).ceil() as u32);
+        state.chm_nb_events_waited = nb_events;
+        state.fn_chance_threshold = threshold;
+
+        while !samples.is_empty() || !unused_rep.is_empty() {
+            if let Some(s) = samples.pop() {control.send_connection_sample(s)}
+            if let Some(s) = unused_rep.pop() {control.send_unused_channel(s)}
+            state.deduction_loop();
+        }
+
+        assert!(matches!(state.state, State::Processing));
+        assert!(state.channel_map.iter().all(|e| !matches!(e, &ChannelMapEntry::Unknown)));
+        assert!(used.into_iter().all(|c| matches!(state.channel_map[c as usize], ChannelMapEntry::Used)));
+        assert!(unused.into_iter().all(|c| matches!(state.channel_map[c as usize], ChannelMapEntry::Unused)));
+
+        let req = control.get_deducer_request().expect("Should have seen channel map by now");
+        assert!(control.get_deducer_request().is_none());
+        let bf_params = if let DeducerToMaster::DistributedBruteForce(b, _) = req {b} else {panic!("wrong")};
+
+        assert_eq!(bf_params.nb_events, nb_events);
+        assert!((bf_params.threshold - threshold).abs() < 0.0001);
+        assert_eq!(bf_params.channel_id, channel_id);
+        assert_eq!(bf_params.seen_channel_map, 116786200309);
+        assert_eq!(bf_params.version, 1);
+        assert_eq!(bf_params.nb_sniffers, NB_SNIFFERS);
+        assert!((bf_params.packet_loss - packet_loss_bf).abs() < 0.0001);
+        //println!("{:?}", &bf_params.relative_counters_and_channels);
+        assert!(bf_params.relative_counters_and_channels.iter().all(|d| packets.contains(d)));
+
+
+        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+
+        let mut bfs = (0..bf_params.nb_sniffers).map(|s| brute_force(s, BruteForceParametersBox::alloc().unwrap().init(bf_params.clone()))).collect_vec();
+        //println!("{:?}", &bfs);
+        let last = bfs.pop().unwrap();
+        for r in bfs {
+            control.send_brute_force_result(r);
+            assert_eq!((false,false), state.deduction_loop());
+        }
+        control.send_brute_force_result(last);
+        assert_eq!((true,false), state.deduction_loop());
+
+        let req = control.get_deducer_request().expect("Should have seen channel map by now");
+        assert!(control.get_deducer_request().is_none());
+        assert!(matches!(state.state, State::DecideUnsureChannels));
+        let (deduced_params, unsure_channels) = if let DeducerToMaster::ListenForUnsureChannels(b, tod) = req {(b, tod)} else {panic!("wrong")};
+        assert_eq!(unsure_channels, 20652753162);
+        assert_eq!(deduced_params.channel_map, 116786200309);
+        assert_eq!(deduced_params.last_time, last_time);
+        assert_eq!(deduced_params.last_counter, last_event);
+        assert_eq!(deduced_params.conn_interval, conn_interval);
+        assert_eq!(state.found_chm_unsure, 116786200309);
+        assert_eq!(state.found_time, last_time);
+        assert_eq!(state.found_counter, last_event);
+
+        let mut fns = (0u8..37).filter(|c| (chm ^ deduced_params.channel_map) & (1 << *c) != 0).collect_vec();
+        let tns = (0u8..37).filter(|c| unsure_channels & (1 << *c) != 0).filter(|d| !fns.contains(d)).collect_vec();
+        let unsure_channels_unused_threshold = geo_qdf(1.0 - state.start_parameters.packet_loss, 0.95) as u8;
+        assert!((0u8..37).all(|c| if fns.contains(&c) || tns.contains(&c) {state.unsure_channels_remaining_occurrences[c as usize] == unsure_channels_unused_threshold} else {state.unsure_channels_remaining_occurrences[c as usize] ==  0}));
+        assert_eq!(state.found_chm_unsure, deduced_params.channel_map);
+
+
+
+        for c in tns {
+            for _ in 0..unsure_channels_unused_threshold {
+                control.send_unsure_channel_event(UnsureChannelEvent { channel: c, time: last_time + 1, event_counter: last_event + 1, seen: false });
+                assert_eq!((false,false), state.deduction_loop());
+            }
+        }
+        let last = fns.pop().unwrap();
+        for c in fns {
+            control.send_unsure_channel_event(UnsureChannelEvent { channel: c, time: last_time + 1, event_counter: last_event + 1, seen: true });
+            assert_eq!((false,false), state.deduction_loop());
+        }
+        control.send_unsure_channel_event(UnsureChannelEvent { channel: last, time: last_time + 1, event_counter: last_event + 1, seen: true });
+        assert_eq!((true,false), state.deduction_loop());
+
+        assert!(matches!(state.state, State::Idle));
+
+        let req = control.get_deducer_request().expect("Should have seen channel map by now");
+        assert!(control.get_deducer_request().is_none());
+        let deduced_params = if let DeducerToMaster::DeducedParameters(b) = req {b} else {panic!("wrong")};
+        assert_eq!(deduced_params.channel_map, chm);
+        assert_eq!(deduced_params.last_time, last_time + 1);
+        assert_eq!(deduced_params.last_counter, last_event + 1);
+        assert_eq!(deduced_params.conn_interval, conn_interval);
+        assert_eq!(*deduced_params,
+            DeducedParameters {
+                access_address: 15759,
+                master_phy: BlePhy::Uncoded2M,
+                slave_phy: BlePhy::Uncoded2M,
+                conn_interval,
+                channel_map: chm,
+                crc_init: 0x53426,
+                last_time: last_time + 1,
+                last_counter: last_event + 1,
+            });
     }
 }

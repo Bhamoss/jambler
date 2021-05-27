@@ -29,7 +29,7 @@ pool!(
     #[allow(non_upper_case_globals)]
     DeducedParametersBox: DeducedParameters
 );
-type DpBuf = [Node<DeducedParameters>; DPBUF_SIZE];
+pub type DpBuf = MaybeUninit<[Node<DeducedParameters>; DPBUF_SIZE]>;
 impl Debug for DeducedParametersBox {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.deref().fmt(f)
@@ -42,7 +42,7 @@ pool!(
     #[allow(non_upper_case_globals)]
     BruteForceParametersBox: BruteForceParameters
 );
-type BfpBuf = [Node<BruteForceParameters>; BFPBUF_SIZE];
+pub type BfpBuf = MaybeUninit<[Node<BruteForceParameters>; BFPBUF_SIZE]>;
 impl Debug for BruteForceParametersBox {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.deref().fmt(f)
@@ -112,7 +112,7 @@ impl DeductionQueueStore {
     }
 
     #[allow(clippy::needless_lifetimes)]
-    pub fn split<'a>(&'a mut self, dp_memory : &'static mut MaybeUninit<DpBuf>, bfp_memory : &'static mut MaybeUninit<BfpBuf>) -> (DeduceConnectionParametersControl<'a>, DeductionState<'a>) {
+    pub fn split<'a>(&'a mut self, dp_memory : &'static mut DpBuf, bfp_memory : &'static mut BfpBuf) -> (DeduceConnectionParametersControl<'a>, DeductionState<'a>) {
         DeducedParametersBox::grow_exact(dp_memory);
         BruteForceParametersBox::grow_exact(bfp_memory);
 
@@ -187,7 +187,7 @@ impl<'a> DeduceConnectionParametersControl<'a> {
         }
     }
 
-    pub fn report_unused_channel(&mut self, channel: UnusedChannel) {
+    pub fn send_unused_channel(&mut self, channel: UnusedChannel) {
         if self.unused_queue.enqueue(channel).is_err() {
             //println!("Channel queue overflow, dropping packet.")
         }
