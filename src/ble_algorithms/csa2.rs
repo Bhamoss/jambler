@@ -139,7 +139,7 @@ pub fn csa2(
         )
     }
 }
-
+/*
 #[cfg(target_arch="arm")]
 #[inline(always)]
 pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
@@ -174,8 +174,8 @@ pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
     }
     prn_e
 }
+*/
 
-#[cfg(not(target_arch="arm"))]
 #[inline(always)]
 pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
     let mut prn_e: u16;
