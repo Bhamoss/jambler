@@ -1,13 +1,21 @@
 use core::fmt::Debug;
-use super::{brute_force::{BruteForceParameters, BruteForceResult}, control::{DeducerToMaster, MasterToDeducer, BruteForceParametersBox, DeducedParametersBox}, distributions::{geo_qdf, prob_of_seeing_if_used}};
+use super::{brute_force::{convert_bf_param, BfParam, BruteForceParameters, BruteForceResult}, control::{ DeducerToMaster, MasterToDeducer, convert_deduced_param}, distributions::{geo_qdf, prob_of_seeing_if_used}};
 use crate::{ble_algorithms::csa2::{calculate_channel_identifier}, jambler::BlePhy};
 // vscode gives fake warnings here, thinking we are using std for some reason...
 #[allow(unused_imports)]
 use num::{Integer, integer::{binomial, gcd}, traits::Float};
 
-use heapless::{ Vec, pool::{ singleton::{Box, Pool}}, spsc::{Consumer, Producer}, spsc::Queue};
+use heapless::{ Vec, spsc::{Consumer, Producer}, spsc::Queue};
 
+//#[cfg(not(target_arch="x86_64"))]
+//use heapless::pool::singleton::Pool;
+//#[cfg(not(target_arch="x86_64"))]
+//use super::control::DeducedParametersBox;
 
+//#[cfg(not(target_arch="x86_64"))]
+//use super::control::BruteForceParametersBox;
+//#[cfg(not(target_arch="x86_64"))]
+//use heapless::pool::singleton::Box;
 
 /********************* INTERNAL DEDUCTION STRUCT HELPERS *********************************/
 
@@ -633,7 +641,7 @@ impl<'a> DeductionState<'a> {
     }
 
 
-    fn prepare_brute_force(&mut self) -> Box<BruteForceParametersBox> {
+    fn prepare_brute_force(&mut self) -> BfParam {
 
         let bps = &mut self.processing_state.params;
         // Increment version
@@ -685,9 +693,11 @@ impl<'a> DeductionState<'a> {
         
         //println!("Brute forcing with conn {}, id {}, map {:037b}, drift {}, offset {}, version {}", self.processing_state.conn_interval, bps.channel_id, bps.channel_map, self.processing_state.drift, self.processing_state.offset, bps.version);
 
-        let b = BruteForceParametersBox::alloc().expect("BruteForceParameters heap overflow");
-        b.init(bps.clone())
+        //let b = BruteForceParametersBox::alloc().expect("BruteForceParameters heap overflow");
+        //b.init(bps.clone())
 
+
+        convert_bf_param(&bps)
     }
 
     fn processing(&mut self) -> bool {
@@ -755,7 +765,8 @@ impl<'a> DeductionState<'a> {
                         last_time: self.found_time,
                         last_counter: self.found_counter,
                     };
-                    let conn_params = DeducedParametersBox::alloc().expect("Deduced params overflow").init(conn_params);
+                    //let conn_params = DeducedParametersBox::alloc().expect("Deduced params overflow").init(conn_params);
+                    let conn_params = convert_deduced_param(&conn_params);
                     self.request_master(DeducerToMaster::ListenForUnsureChannels(conn_params, chm_todo));
                 }
                 CounterInterval::MultipleSolutions => {
@@ -810,7 +821,8 @@ impl<'a> DeductionState<'a> {
                 last_time: self.found_time,
                 last_counter: self.found_counter,
             };
-            let conn_params = DeducedParametersBox::alloc().expect("Deduced params overflow").init(conn_params);
+            
+            let conn_params = convert_deduced_param(&conn_params);
 
             self.request_master(DeducerToMaster::DeducedParameters(conn_params));
 
@@ -918,14 +930,23 @@ mod deducer_helper_tests {
 mod deducer_tests {
     use core::mem::MaybeUninit;
 
-    use crate::jambler::deduction::{brute_force::brute_force, control::{DeductionQueueStore, DpBuf, BfpBuf}};
+    use crate::jambler::deduction::{brute_force::{brute_force, clone_bf_param}, control::{DeductionQueueStore, DpBuf, BfpBuf}};
     use super::CounterInterval::{self, *};
     use std::vec::Vec;
     use super::*;
-    use heapless::pool::Node;
     use itertools::Itertools;
-    use rand::{Rng, RngCore, prelude::SliceRandom, thread_rng};
+    use rand::{RngCore, prelude::SliceRandom, thread_rng};
+
+    #[cfg(not(target_arch="x86_64"))]
+    use super::super::control::BruteForceParametersBox;
     
+
+    #[cfg(not(target_arch="x86_64"))]
+    use heapless::pool::Node;
+
+
+    #[cfg(not(target_arch="x86_64"))]
+    use heapless::pool::singleton::Pool;
 
     #[test]
     fn deducer_start_reset() {
@@ -1343,10 +1364,13 @@ mod deducer_tests {
         assert!(bf_params.relative_counters_and_channels.iter().all(|d| packets.contains(d)));
 
 
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS+1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
 
-        let mut bfs = (0..bf_params.nb_sniffers).map(|s| brute_force(s, BruteForceParametersBox::alloc().unwrap().init(bf_params.clone()))).collect_vec();
+        let params = convert_bf_param(&bf_params);
+
+        let mut bfs = (0..bf_params.nb_sniffers).map(|s| brute_force(s, clone_bf_param(&bf_params))).collect_vec();
         //println!("{:?}", &bfs);
         let last = bfs.pop().unwrap();
         for r in bfs {
@@ -1400,7 +1424,11 @@ mod deducer_tests {
         assert_eq!(deduced_params.last_time, last_time + 1);
         assert_eq!(deduced_params.last_counter, last_event + 1);
         assert_eq!(deduced_params.conn_interval, conn_interval);
-        assert_eq!(*deduced_params,
+
+        #[cfg(not(target_arch="x86_64"))]
+        let deduced_params = *deduced_params;
+
+        assert_eq!(deduced_params,
             DeducedParameters {
                 access_address: 15759,
                 master_phy: BlePhy::Uncoded2M,

@@ -4,6 +4,7 @@ use heapless::spsc::Producer;
 use core::fmt::Debug;
 use core::ops::Deref;
 
+use super::brute_force::BfParam;
 use super::brute_force::BruteForceParameters;
 use super::brute_force::BruteForceResult;
 use super::deducer::ConnectionSample;
@@ -15,11 +16,27 @@ use super::{deducer::{DeductionState}};
 
 use core::mem::{MaybeUninit};
 
+#[cfg(not(target_arch="x86_64"))]
+use heapless::pool::singleton::Box;
 
-use heapless::{pool::{Node, singleton::{Box, Pool}}, spsc::Queue};
+use heapless::{pool::{Node, singleton::Pool}, spsc::Queue};
 use heapless::pool;
 //use lazy_static::__Deref;
 
+
+// Necessary for mutlithreading on x86
+#[cfg(target_arch="x86_64")]
+pub type DpParam = DeducedParameters;
+#[cfg(not(target_arch="x86_64"))]
+pub type DpParam = Box<DeducedParametersBox>;
+
+#[inline(always)]
+pub fn convert_deduced_param(p: &DeducedParameters) -> DpParam {
+    #[cfg(target_arch="x86_64")]
+    return *p;
+    #[cfg(not(target_arch="x86_64"))]
+    return DeducedParametersBox::alloc().expect("DeducedParametersBox heap overflow").init(*p);
+}
 
 
 
@@ -75,14 +92,14 @@ pub enum DeducerToMaster {
     StartChannelMap(u32, u64, u32),
     /// Signal distributed brute force request.
     /// Sniffer should listen on used channels, that is way the current seen channels have been given.
-    DistributedBruteForce(Box<BruteForceParametersBox>, u64),
+    DistributedBruteForce(BfParam, u64),
     /// Listen for the unsure channels, indicated by the u64.
     /// The channel map in the parameters will have 0 for the unsure channels -> XOR with todo and let channels follow as if normal.
     /// Then let master filter out unseen reports for the todo channel map.
     /// At this point the master is responsible for keeping the updated data (most recent seen packet to sync to when parameters are deduced).
-    ListenForUnsureChannels(Box<DeducedParametersBox>, u64),
+    ListenForUnsureChannels(DpParam, u64),
     /// Special non-task: should be called on master by deduction task to signal it was found
-    DeducedParameters(Box<DeducedParametersBox>)
+    DeducedParameters(DpParam)
 }
 
 

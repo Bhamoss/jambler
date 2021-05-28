@@ -1,8 +1,13 @@
+
+#[cfg(not(target_arch="x86_64"))]
 use core::mem::MaybeUninit;
+#[cfg(not(target_arch="x86_64"))]
+use heapless::pool::{Node, singleton::Pool};
+#[cfg(not(target_arch="x86_64"))]
+use jambler::jambler::deduction::control::BruteForceParametersBox;
 
 use criterion::{ criterion_group, criterion_main, Criterion};
-use heapless::pool::{Node, singleton::Pool};
-use jambler::{self, jambler::deduction::{brute_force::{BruteForceParameters, brute_force}, control::BruteForceParametersBox, deducer::CounterInterval::{self, *}}};
+use jambler::{self, jambler::deduction::{brute_force::{BruteForceParameters, brute_force, clone_bf_param, convert_bf_param},  deducer::CounterInterval::{self, *}}};
 use rayon::prelude::*;
 
 
@@ -35,10 +40,14 @@ fn criterion_benchmark(c: &mut Criterion) {
             relative_counters_and_channels: packets.into_iter().collect(),
         };
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+        let params = convert_bf_param(&params);
+
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
         let nb_exactly_one = results.iter().filter(|r| matches!(r.result, ExactlyOneSolution(_, _, _))).count();

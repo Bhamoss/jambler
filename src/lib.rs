@@ -4,6 +4,8 @@
 #![allow(unused_variables)]
 #![allow(dead_code)]
 
+#![feature(asm)]
+
 // TODO get a generic writing/logging macro to replace the RTT with, but later link it with in NRF crate
 // TODO only boxes in deduce connection parameters need to be replaced with their own heapless pool boxes, then you should be able to test using std, yet using the lib is still no_std
 // TODO also split the deduciton into couple file in directory

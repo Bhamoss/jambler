@@ -1,13 +1,37 @@
 
+#[cfg(not(target_arch="x86_64"))]
+use heapless::pool::singleton::{Box, Pool};
+#[cfg(not(target_arch="x86_64"))]
+use super::control::BruteForceParametersBox;
 
-use heapless::{Vec, pool::singleton::Box};
 
+use heapless::Vec;
 
 use crate::ble_algorithms::csa2::{csa2_no_subevent, generate_channel_map_arrays};
 
-use super::{deducer::CounterInterval, distributions::prob_of_seeing_if_used, control::BruteForceParametersBox};
+use super::{deducer::CounterInterval, distributions::prob_of_seeing_if_used};
 
+// Necessary for mutlithreading on x86
+#[cfg(target_arch="x86_64")]
+pub type BfParam = BruteForceParameters;
+#[cfg(not(target_arch="x86_64"))]
+pub type BfParam = Box<BruteForceParametersBox>;
 
+#[inline(always)]
+pub fn clone_bf_param(p: &BfParam) -> BfParam {
+    #[cfg(target_arch="x86_64")]
+    return p.clone();
+    #[cfg(not(target_arch="x86_64"))]
+    return BruteForceParametersBox::alloc().unwrap().init((*p).clone());
+}
+
+#[inline(always)]
+pub fn convert_bf_param(p: &BruteForceParameters) -> BfParam {
+    #[cfg(target_arch="x86_64")]
+    return p.clone();
+    #[cfg(not(target_arch="x86_64"))]
+    return BruteForceParametersBox::alloc().expect("BruteForceParameters heap overflow").init(p.clone());
+}
 
 #[derive(Debug, Clone, PartialEq)]
 /// Will be broadcast over i2c for distributed brute forcing.
@@ -46,7 +70,7 @@ pub struct BruteForceResult {
 }
 
 
-pub fn brute_force(sniffer_id: u8, params: Box<BruteForceParametersBox>) -> BruteForceResult {
+pub fn brute_force(sniffer_id: u8, params: BfParam) -> BruteForceResult {
 
     // TODO for likely false negatives, take from 0..max because if your packet loss is less bad than expected
     // TODO this will result in no solution if your sniffer did capture all packets
@@ -286,16 +310,23 @@ mod chm_combo_tests {
 #[cfg(test)]
 mod brute_force_tests {
 
+    #[cfg(not(target_arch="x86_64"))]
     use core::mem::MaybeUninit;
+
+    #[cfg(not(target_arch="x86_64"))]
+    use heapless::pool::Node;
+    #[cfg(not(target_arch="x86_64"))]
+    use heapless::pool::singleton::Pool;
+    #[cfg(not(target_arch="x86_64"))]
+    use crate::jambler::deduction::control::BruteForceParametersBox;
     use std::vec::Vec;
     use std::iter::Iterator;
-    use heapless::pool::Node;
-    use heapless::pool::singleton::Pool;
     //use itertools::Itertools;
     use crate::jambler::deduction::brute_force::BruteForceParameters;
     use crate::jambler::deduction::brute_force::brute_force;
+    use crate::jambler::deduction::brute_force::clone_bf_param;
+    use crate::jambler::deduction::brute_force::convert_bf_param;
     use crate::jambler::deduction::deducer::CounterInterval::{self, *};
-    use crate::jambler::deduction::control::BruteForceParametersBox;
     use rayon::prelude::*;
 
 
@@ -326,11 +357,16 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+
+        let params = convert_bf_param(&params);
+        
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
@@ -377,11 +413,14 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+        let params = convert_bf_param(&params);
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
@@ -428,11 +467,14 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+        let params = convert_bf_param(&params);
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
@@ -479,11 +521,14 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+        let params = convert_bf_param(&params);
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
@@ -530,11 +575,15 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+
+        let params = convert_bf_param(&params);
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
@@ -581,11 +630,15 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+
+        let params = convert_bf_param(&params);
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));
@@ -631,11 +684,14 @@ mod brute_force_tests {
         };
 
         // Create heap for params
-        static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;NB_SNIFFERS as usize]> = MaybeUninit::uninit();
-        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+        let params = convert_bf_param(&params);
 
         let results = (0..NB_SNIFFERS).into_par_iter()
-        .map(|sniffer_id| brute_force(sniffer_id, BruteForceParametersBox::alloc().unwrap().init(params.clone())))
+        .map(|sniffer_id| brute_force(sniffer_id, clone_bf_param(&params)))
         .collect::<Vec<_>>();
 
         assert!(results.iter().all(|r| !matches!(r.result, MultipleSolutions)));

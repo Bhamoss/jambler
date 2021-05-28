@@ -68,6 +68,17 @@ pub fn csa2_no_subevent(
 /// Operation block in the CSA#2 algorithm.
 /// Switches the byte by first switching bits next to each other, pairs next to each other, then 4bits next to each other.
 /// This results in each separate byte switched.
+#[cfg(target_arch="arm")]
+#[inline(always)]
+pub fn perm(mut input: u16) -> u16 {
+    unsafe {
+        asm!("rbit {0}, {0}", "rev {0}, {0}", inout(reg) input);
+    }
+    input
+}
+
+
+#[cfg(not(target_arch="arm"))]
 #[inline(always)]
 pub fn perm(mut input: u16) -> u16 {
     input = ((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1);
@@ -128,6 +139,7 @@ pub fn csa2(
     }
 }
 
+#[inline(always)]
 pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
     let mut prn_e: u16;
     prn_e = counter ^ channel_identifier; // xor
