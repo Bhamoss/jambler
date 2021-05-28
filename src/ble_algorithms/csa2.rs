@@ -41,6 +41,7 @@ pub fn generate_channel_map_arrays(channel_map: u64) -> ([bool; 37], [u8; 37], [
 
 /// Calculate the channel for the given counter, channel identifier and channel map.
 /// Uses u32 internally because of overflow it will run into u32 multiple times and instead of casting thousands of time, just reuse the u32s.
+#[inline(always)]
 pub fn csa2_no_subevent(
     counter: u32,
     channel_identifier: u32,
@@ -139,6 +140,42 @@ pub fn csa2(
     }
 }
 
+#[cfg(target_arch="arm")]
+#[inline(always)]
+pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
+    let mut prn_e: u16;
+    const M17: u8 = 17;
+    const M16: u16 = 0xFF_FF;
+    unsafe {
+        asm!(   
+                "eor {p}, {co}, {chi}",  // prn_e = counter ^ channel_identifier;
+                "rbit {p}, {p}", // PERM
+                "rev {p}, {p}", 
+                "mul {p}, {p}, {m}",  // MAM
+                "add {p}, {p}, {chi}", 
+                "and {p}, {p}, {m16}", 
+                "rbit {p}, {p}", // second time
+                "rev {p}, {p}", 
+                "mul {p}, {p}, {m}", 
+                "add {p}, {p}, {chi}", 
+                "and {p}, {p}, {m16}", 
+                "rbit {p}, {p}", // third time
+                "rev {p}, {p}", 
+                "mul {p}, {p}, {m}", 
+                "add {p}, {p}, {chi}", 
+                "and {p}, {p}, {m16}", 
+                "eor {p}, {p}, {chi}", //prn_e ^= channel_identifier;
+                p = out(reg) prn_e,
+                m = in(reg) M17,
+                chi = in(reg) channel_identifier,
+                m16 = in(reg) M16,
+                co = in(reg) counter,
+                );
+    }
+    prn_e
+}
+
+#[cfg(not(target_arch="arm"))]
 #[inline(always)]
 pub fn prn_e(counter: u16, channel_identifier: u16) -> u16 {
     let mut prn_e: u16;
