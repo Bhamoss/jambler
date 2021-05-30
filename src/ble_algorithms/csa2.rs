@@ -66,6 +66,22 @@ pub fn csa2_no_subevent(
     }
 }
 
+
+/// Calculate the channel for the given counter, channel identifier and channel map.
+/// Uses u32 internally because of overflow it will run into u32 multiple times and instead of casting thousands of time, just reuse the u32s.
+#[inline(always)]
+pub fn csa2_unmapped(
+    counter: u16,
+    channel_identifier: u16,
+) -> u8 {
+    // calculate "pseudo random number e", figure 4.46
+    let prn_e = prn_e(counter as u16, channel_identifier as u16);
+
+    // figure 4.47
+    (prn_e % 37) as u8
+}
+
+
 /// Operation block in the CSA#2 algorithm.
 /// Switches the byte by first switching bits next to each other, pairs next to each other, then 4bits next to each other.
 /// This results in each separate byte switched.

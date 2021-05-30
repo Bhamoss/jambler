@@ -18,8 +18,10 @@ use core::mem::{MaybeUninit};
 
 #[cfg(not(target_arch="x86_64"))]
 use heapless::pool::singleton::Box;
+#[cfg(not(target_arch="x86_64"))]
+use heapless::pool::singleton::Pool;
 
-use heapless::{pool::{Node, singleton::Pool}, spsc::Queue};
+use heapless::{pool::{Node}, spsc::Queue};
 use heapless::pool;
 //use lazy_static::__Deref;
 
@@ -130,7 +132,9 @@ impl DeductionQueueStore {
 
     #[allow(clippy::needless_lifetimes)]
     pub fn split<'a>(&'a mut self, dp_memory : &'static mut DpBuf, bfp_memory : &'static mut BfpBuf) -> (DeduceConnectionParametersControl<'a>, DeductionState<'a>) {
+        #[cfg(not(target_arch="x86_64"))]
         DeducedParametersBox::grow_exact(dp_memory);
+        #[cfg(not(target_arch="x86_64"))]
         BruteForceParametersBox::grow_exact(bfp_memory);
 
         // Split queues and hand them to producer and consumer.
