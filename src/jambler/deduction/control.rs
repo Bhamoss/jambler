@@ -202,6 +202,10 @@ impl<'a> DeduceConnectionParametersControl<'a> {
 
     }
 
+    pub fn new_request(&self) -> bool {
+        self.request_queue.peek().is_some()
+    }
+
     pub fn send_connection_sample(&mut self, sample: ConnectionSample) {
         if self.sample_queue.enqueue(sample).is_err() {
             //println!("Sample queue overflow, dropping packet.")

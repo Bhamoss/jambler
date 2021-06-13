@@ -42,6 +42,7 @@ They all seem to support RBIT, REV16 and UDIV
 
 pub mod jambler;
 pub mod ble_algorithms;
+pub mod jambler_master;
 
 #[cfg(test)]
 mod tests {
