@@ -663,6 +663,12 @@ pub enum BlePhy {
     CodedS8,
 }
 
+impl Default for BlePhy {
+    fn default() -> Self {
+        BlePhy::Uncoded1M
+    }
+}
+
 impl core::fmt::Display for BlePhy {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

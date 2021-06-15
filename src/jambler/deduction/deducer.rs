@@ -53,7 +53,7 @@ pub struct UnsureChannelEvent {
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 /// A struct holding all important information a subevent can hold for reversing the parameters of a connection.
 pub struct ConnectionSample {
     pub slave_id: u8,
@@ -64,14 +64,14 @@ pub struct ConnectionSample {
     pub response: Option<ConnectionSamplePacket>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct UnusedChannel {
     pub channel: u8,
     pub sniffer_id: u8
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 /// Holds all information a packet belonging to a subevent can hold
 pub struct ConnectionSamplePacket {
     /// The first header byte, holding important flags for helping determine if this was an anchorpoint or not
@@ -86,7 +86,7 @@ pub struct ConnectionSamplePacket {
 }
 
 
-#[derive(Clone, Debug, Copy, PartialEq)]
+#[derive(Clone, Debug, Copy, PartialEq, Default)]
 pub struct DeducedParameters {
     pub access_address : u32,
     pub master_phy : BlePhy,
