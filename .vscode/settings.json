@@ -1,5 +1,5 @@
 {
-    //"rust-analyzer.cargo.target": "armv7-unknown-linux-gnueabihf"
+    //"rust-analyzer.cargo.target": "armv7-unknown-linux-gnueabihf",
     "rust-analyzer.cargo.target": null,
     "cSpell.words": [
         "Jambler"

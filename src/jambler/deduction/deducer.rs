@@ -44,7 +44,7 @@ pub enum CounterInterval {
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct UnsureChannelEvent {
     pub channel: u8,
     pub time: u64,
@@ -982,7 +982,7 @@ mod deducer_tests {
 
     use crate::jambler::deduction::{brute_force::{brute_force, clone_bf_param}, control::{DeductionQueueStore, DpBuf, BfpBuf}};
     use super::CounterInterval::{self, *};
-    use std::{iter::FromIterator, vec::Vec};
+    use std::{vec::Vec};
     use super::*;
     use itertools::Itertools;
     use rand::{RngCore, prelude::SliceRandom, thread_rng};

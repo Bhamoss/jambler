@@ -137,6 +137,11 @@ impl<'a> JamblerMaster<'a> {
         // empty rx buf
         while self.bus_rx.dequeue().is_some() {}
 
+        self.deduction_control.reset();
+
+        let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+        if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
+
         self.state = MasterState::Idle;
         self.sniffer_orchestration = SnifferOrchestration::NotDeducing;
     }
@@ -264,6 +269,8 @@ impl<'a> JamblerMaster<'a> {
         match req {
             DeducerToMaster::SearchPacketsForCrcInit(time_to_switch) => {
                 self.sniffer_positions = [u8::MAX; 37];
+                let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+                if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
                 // let sniffers listen on on the respective channels
                 self.sniffer_positions.iter_mut().take(self.nb_sniffers as usize).enumerate()
                     .for_each(|(index, position)| *position = index as u8);
@@ -290,6 +297,8 @@ impl<'a> JamblerMaster<'a> {
 
                 // Put impossible values in position to recognised unnassigned sniffers
                 self.sniffer_positions = [u8::MAX; 37];
+                let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+                if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
 
                 // Assign as many sniffers to used channels as you can
                 (0..37u8).filter(|c| used_channels_until_now & (1 << *c) != 0).take(self.nb_sniffers as usize).enumerate()
@@ -325,6 +334,8 @@ impl<'a> JamblerMaster<'a> {
             },
             DeducerToMaster::StartChannelMap(time_to_listen_in_us, channels_todo, crc_init)  => {
                 self.sniffer_positions = [u8::MAX; 37];
+                let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+                if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
                 let nb_todo = (channels_todo & 0x1F_FF_FF_FF_FF).count_ones();
                 // Assign as many sniffers to todo channels as you can. 
                 (0..37u8).filter(|c| channels_todo & (1 << *c) != 0).take(self.nb_sniffers as usize).enumerate()
@@ -361,6 +372,9 @@ impl<'a> JamblerMaster<'a> {
             },
             DeducerToMaster::DistributedBruteForce(bfparams, current_channel_map) => {
                 self.sniffer_positions = [u8::MAX; 37];
+                // Make sure they are all silent so no doubles.
+                let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+                if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
 
                 // Let brute force and let sniffers listen on used channels, others silent
                 (0..37u8).filter(|c| current_channel_map & (1 << *c) != 0).take(self.nb_sniffers as usize).enumerate()
@@ -401,7 +415,9 @@ impl<'a> JamblerMaster<'a> {
                 #[cfg(not(target_arch="x86_64"))]
                 {self.connection_parameters = *conn_params;}
 
-
+                // Make sure they are all silent so no doubles.
+                let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+                if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
 
                 // Ask sniffer 0 to follow the connection
                 if self.bus_tx.enqueue(MasterMessage {
@@ -412,6 +428,9 @@ impl<'a> JamblerMaster<'a> {
                 self.sniffer_orchestration = SnifferOrchestration::Follow(Some(channels_todo))
             },
             DeducerToMaster::DeducedParameters(mut conn_params) => {
+
+                let idle_mes = MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle};
+                if self.bus_tx.enqueue(idle_mes).is_err() {panic!("master made bus overflow")}
 
                 // Take our last known point, deducer one is not necessarily latest
                 conn_params.last_counter = self.connection_parameters.last_counter;
@@ -627,9 +646,16 @@ impl<'a> JamblerMaster<'a> {
 
 #[cfg(test)]
 mod master_tests {
-    use std::usize;
+    use core::{ usize};
 
-    use crate::{jambler::{BlePhy, deduction::{brute_force::{BruteForceParameters, BruteForceResult, clone_bf_param, convert_bf_param}, control::{DeduceConnectionParametersControl, DeducerToMaster, MasterToDeducer}, deducer::{ConnectionSample, ConnectionSamplePacket, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}}, jambler_master::{BusRecipient,  JamblerCommand, ListenUntil, MasterLoopReturn, MasterMessageType, MasterState, RadioTask, SlaveMessageType, SnifferOrchestration}};
+    #[cfg(not(target_arch="x86_64"))]
+    use core::mem::MaybeUninit;
+    #[cfg(not(target_arch="x86_64"))]
+    use crate::jambler::deduction::control::{BruteForceParametersBox, DeducedParametersBox};
+    #[cfg(not(target_arch="x86_64"))]
+    use heapless::pool::{singleton::Pool, Node};
+
+    use crate::{jambler::{BlePhy, deduction::{brute_force::{BruteForceParameters, BruteForceResult, clone_bf_param, convert_bf_param}, control::{DeduceConnectionParametersControl, DeducerToMaster, MasterToDeducer, convert_deduced_param}, deducer::{ConnectionSample, ConnectionSamplePacket, DeducedParameters, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}}, jambler_master::{BusRecipient,  JamblerCommand, ListenUntil, MasterLoopReturn, MasterMessageType, MasterState, RadioTask, SlaveMessageType, SnifferOrchestration}};
 
     use super::{JamblerMaster, MasterMessage, SlaveMessage};
 
@@ -740,6 +766,15 @@ mod master_tests {
             wake_master: false
         });
         assert_eq!(master.state, MasterState::Deducing);
+        
+
+        if let Some(mm) = deducer_queues.command_queue.dequeue() {
+            if let MasterToDeducer::Reset = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
         if let Some(MasterToDeducer::Start(sent_to_ded)) = deducer_queues.command_queue.dequeue() {
             assert_eq!(spars, sent_to_ded);
         }
@@ -757,6 +792,22 @@ mod master_tests {
             wake_master: false
         });
         assert_eq!(master.sniffer_orchestration, SnifferOrchestration::SequentialTimeOut(25));
+
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
 
         while let Some(mm) = bus.bus_master_messages.dequeue() {
             if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
@@ -892,6 +943,22 @@ mod master_tests {
         assert_eq!(spars, master.start_parameters);
         assert_eq!(master.nb_sniffers, NB_SNIFFERS);
         assert_eq!(master.sniffer_orchestration, SnifferOrchestration::UsedAlwaysRestTimeOut(50, 1235234, (1 << 15) | (1 << 20)));
+
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
 
         while let Some(mm) = bus.bus_master_messages.dequeue() {
             if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
@@ -1115,6 +1182,22 @@ mod master_tests {
         assert_eq!(spars, master.start_parameters);
         assert_eq!(master.nb_sniffers, NB_SNIFFERS);
         assert_eq!(master.sniffer_orchestration, SnifferOrchestration::TimeOutRemaining(500, cht ^ 0b11_1111_1111,1235234,(1 << 15) | (1 << 20)));
+
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
 
         while let Some(mm) = bus.bus_master_messages.dequeue() {
             if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
@@ -1365,6 +1448,15 @@ mod master_tests {
         assert_eq!(spars, master.start_parameters);
         assert_eq!(master.nb_sniffers, NB_SNIFFERS);
         assert_eq!(master.sniffer_orchestration, SnifferOrchestration::UsedAlwaysRestTimeOut(0,0, bf.seen_channel_map));
+
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
         
         let mut bf_seen = false;
         while let Some(mm) = bus.bus_master_messages.dequeue() {
@@ -1416,5 +1508,234 @@ mod master_tests {
         }
         else {panic!()}
         assert!(deducer_queues.brute_force_result_queue.dequeue().is_none())
+    }
+
+    #[test]
+    fn follow_unsure_test() {
+        let mut store = AllQueuesStore::new();
+        const NB_SNIFFERS : u8 = 10;
+
+        let (mut master, mut bus, mut deducer_queues) = setup(&mut store, 10);
+
+        //let mut start_params = DeductionStartParameters::default();
+        //start_params.nb_sniffers = NB_SNIFFERS;
+
+        let spars = DeductionStartParameters {
+            nb_sniffers : NB_SNIFFERS,
+            slave_phy: BlePhy::CodedS8,
+            access_address : 1235234,
+            ..Default::default()
+        };
+        master.execute_command(JamblerCommand::Follow(spars));
+        master.sniffer_orchestration =  SnifferOrchestration::UsedAlwaysRestTimeOut(0,0, 1234);
+
+
+        // check brute force
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut DP_HEAP : MaybeUninit<[Node<DeducedParameters>;10]> = MaybeUninit::uninit();
+        unsafe{DeducedParametersBox::grow_exact(&mut DP_HEAP)};}
+
+
+        let unsures = vec![2u8,3,4];
+        let unsures_map = unsures.iter().fold(0u64, |b,c| b | (1 << *c));
+
+        let dp = DeducedParameters {
+            access_address : spars.access_address,
+            slave_phy : spars.slave_phy,
+            master_phy : spars.master_phy,
+            channel_map : unsures_map,
+            ..Default::default()
+        };
+
+        let dp = convert_deduced_param(&dp);
+
+
+        let mut dp_cop = convert_deduced_param(&dp);
+
+        // Test going from conn int to channel map
+        deducer_queues.request_queue.enqueue(DeducerToMaster::ListenForUnsureChannels(dp, unsures_map)).unwrap();
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: true,
+            wake_deducer_task: false,
+            wake_master: false
+        });
+        assert_eq!(spars, master.start_parameters);
+        assert_eq!(master.nb_sniffers, NB_SNIFFERS);
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::Follow(Some(unsures_map)));
+        #[cfg(target_arch="x86_64")]
+        assert_eq!(master.connection_parameters, dp_cop);
+        #[cfg(not(target_arch="x86_64"))]
+        assert_eq!(master.connection_parameters, *dp_cop);
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Slave(0), message : MasterMessageType::RadioTaskRequest(RadioTask::Follow(d, Some(ch))) } = mm {
+                assert_eq!(dp_cop, d);
+                assert_eq!(unsures_map, ch);
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        assert!(bus.bus_master_messages.dequeue().is_none());
+
+        let mut event_counter = 4;
+        for (time, channel) in (1000u64..100000).step_by(1000).zip((0..37u8).cycle()) {
+            let mut event = UnsureChannelEvent {
+                channel,
+                time,
+                event_counter,
+                seen: event_counter % 2 == 0,
+            };
+
+            let mes = SlaveMessage {
+                slave_id: 0,
+                message: SlaveMessageType::UnsureChannelEventReport(event.clone()),
+                relative_slave_drift: -10,
+            };
+
+            if bus.bus_slave_messages.enqueue(mes).is_err() {
+                panic!("overf")
+            }
+
+            let should_report = unsures.contains(&channel);
+
+            let ret = master.master_loop();
+            assert_eq!(ret, MasterLoopReturn {
+                wake_bus_transmitter: false,
+                wake_deducer_task: should_report,
+                wake_master: false
+            });
+
+            event.time -= 10;
+
+            if should_report {
+                assert_eq!(event, deducer_queues.unsure_channel_queue.dequeue().unwrap());
+                assert!(deducer_queues.unsure_channel_queue.dequeue().is_none());
+            }
+
+            if event.seen {
+                assert_eq!(master.connection_parameters.last_time, time - 10);
+                assert_eq!(master.connection_parameters.last_counter, event_counter);
+            }
+
+            event_counter = event_counter.wrapping_add(1);
+        }
+
+
+        deducer_queues.request_queue.enqueue(DeducerToMaster::DeducedParameters(convert_deduced_param(&master.connection_parameters))).unwrap();
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: true,
+            wake_deducer_task: false,
+            wake_master: false
+        });
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::NotDeducing);
+        assert_eq!(master.state, MasterState::Following);
+
+        dp_cop.last_time = master.connection_parameters.last_time;
+        dp_cop.last_counter = master.connection_parameters.last_counter;
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Slave(0), message : MasterMessageType::RadioTaskRequest(RadioTask::Follow(d, None)) } = mm {
+                assert_eq!(dp_cop, d);
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        assert!(bus.bus_master_messages.dequeue().is_none());
+    }
+
+
+    #[test]
+    fn reset_test() {
+        let mut store = AllQueuesStore::new();
+        const NB_SNIFFERS : u8 = 10;
+
+        let (mut master, mut bus, mut deducer_queues) = setup(&mut store, 10);
+
+        //let mut start_params = DeductionStartParameters::default();
+        //start_params.nb_sniffers = NB_SNIFFERS;
+
+        let spars = DeductionStartParameters {
+            nb_sniffers : NB_SNIFFERS,
+            slave_phy: BlePhy::CodedS8,
+            access_address : 1235234,
+            ..Default::default()
+        };
+        master.execute_command(JamblerCommand::Follow(spars));
+
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        while bus.bus_master_messages.dequeue().is_some() {
+            
+        }
+        assert!(bus.bus_master_messages.dequeue().is_none());
+
+        if let Some(mm) = deducer_queues.command_queue.dequeue() {
+            if let MasterToDeducer::Reset = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        assert!(deducer_queues.command_queue.dequeue().is_some());
+        assert!(deducer_queues.command_queue.dequeue().is_none());
+
+        master.reset();
+        if let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::Idle} = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        assert!(bus.bus_master_messages.dequeue().is_none());
+
+
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::NotDeducing);
+        assert_eq!(master.state, MasterState::Idle);
+
+        if let Some(mm) = deducer_queues.command_queue.dequeue() {
+            if let MasterToDeducer::Reset = mm {
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        } else {panic!()}
+        assert!(deducer_queues.command_queue.dequeue().is_none());
+
     }
 }
