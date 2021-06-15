@@ -17,6 +17,7 @@ pub enum MasterMessageType {
     Idle
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum BusRecipient {
     Broadcast,
     Slave(u8)
@@ -195,13 +196,13 @@ impl<'a> JamblerMaster<'a> {
                 match slave_message.message {
                     SlaveMessageType::SampleReport(mut c) => {
                         c.time = (c.time as i64 + drift as i64) as u64;
-                        wake_bus_transmitter = self.direct_slave_on_sample(slave_message.slave_id, &c);
+                        wake_bus_transmitter |= self.direct_slave_on_sample(slave_message.slave_id, &c);
                         self.deduction_control.send_connection_sample(c);
                         wake_deducer_task = true
                     },
                     SlaveMessageType::UnusedChannelReport(u) => {
                         // They will report always on timeout, but we only want to send unused when channel mapping -> timeoutRemaining
-                        wake_bus_transmitter = self.direct_slave_on_unused(slave_message.slave_id,&u);
+                        wake_bus_transmitter |= self.direct_slave_on_unused(slave_message.slave_id,&u);
 
                         if matches!(self.sniffer_orchestration, SnifferOrchestration::TimeOutRemaining(_, _, _, _)) 
                                 && matches!(self.state, MasterState::Deducing) {
@@ -324,15 +325,19 @@ impl<'a> JamblerMaster<'a> {
             },
             DeducerToMaster::StartChannelMap(time_to_listen_in_us, channels_todo, crc_init)  => {
                 self.sniffer_positions = [u8::MAX; 37];
-                let nb_used = (channels_todo & 0x1F_FF_FF_FF_FF).count_ones();
+                let nb_todo = (channels_todo & 0x1F_FF_FF_FF_FF).count_ones();
                 // Assign as many sniffers to todo channels as you can. 
                 (0..37u8).filter(|c| channels_todo & (1 << *c) != 0).take(self.nb_sniffers as usize).enumerate()
                     .for_each(|(sniffer_id, channel)| self.sniffer_positions[sniffer_id] = channel);
 
                 // Assign other sniffers to known used channels. All done channels will be used as we do not send unused by this point.
                 // Dirty trick, but let remaining thus listen on not todo channels
-                ((nb_used as usize)..(self.nb_sniffers as usize)).zip((0..37u8).filter(|c| channels_todo & (1 << *c) == 0))
-                .for_each(|(sniffer_id, channel)| self.sniffer_positions[sniffer_id] = channel);
+                //((nb_used as usize)..(self.nb_sniffers as usize)).zip((0..37u8).filter(|c| channels_todo & (1 << *c) == 0))
+                //.for_each(|(sniffer_id, channel)| self.sniffer_positions[sniffer_id] = channel);
+
+                // The channels being listened on are not to do anymore
+                let updated_ch_todo = (0..self.nb_sniffers.min(nb_todo as u8)).map(|s| self.sniffer_positions[s as usize])
+                    .fold(channels_todo, |rc, c| rc & (!(1 << c) & 0x1F_FF_FF_FF_FF));
 
                 // Again, make sure no 2 on same channels, leave MAXs alone, they should not sniff
 
@@ -348,11 +353,11 @@ impl<'a> JamblerMaster<'a> {
                         channel : *position,
                         master_phy : startps.master_phy,
                         slave_phy: startps.slave_phy,
-                        listen_until : if sniffer_id >= nb_used as usize {ListenUntil::Indefinitely} else { ListenUntil::PacketReception(time_to_listen_in_us)}
+                        listen_until : if sniffer_id >= nb_todo as usize {ListenUntil::Indefinitely} else { ListenUntil::PacketReception(time_to_listen_in_us)}
                     }))
                 }).is_err() {panic!("master made bus overflow")});
 
-                self.sniffer_orchestration = SnifferOrchestration::TimeOutRemaining(time_to_listen_in_us, channels_todo, crc_init, !channels_todo & 0x1F_FF_FF_FF_FF);
+                self.sniffer_orchestration = SnifferOrchestration::TimeOutRemaining(time_to_listen_in_us, updated_ch_todo, crc_init, !channels_todo & 0x1F_FF_FF_FF_FF);
             },
             DeducerToMaster::DistributedBruteForce(bfparams, current_channel_map) => {
                 self.sniffer_positions = [u8::MAX; 37];
@@ -624,9 +629,11 @@ impl<'a> JamblerMaster<'a> {
 mod master_tests {
     use std::usize;
 
-    use crate::{jambler::{BlePhy, deduction::{brute_force::BruteForceResult, control::{DeduceConnectionParametersControl, DeducerToMaster, MasterToDeducer}, deducer::{ConnectionSample, ConnectionSamplePacket, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}}, jambler_master::{BusRecipient,  JamblerCommand, ListenUntil, MasterLoopReturn, MasterMessageType, MasterState, RadioTask, SlaveMessageType, SnifferOrchestration}};
+    use crate::{jambler::{BlePhy, deduction::{brute_force::{BruteForceParameters, BruteForceResult, clone_bf_param, convert_bf_param}, control::{DeduceConnectionParametersControl, DeducerToMaster, MasterToDeducer}, deducer::{ConnectionSample, ConnectionSamplePacket, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}}, jambler_master::{BusRecipient,  JamblerCommand, ListenUntil, MasterLoopReturn, MasterMessageType, MasterState, RadioTask, SlaveMessageType, SnifferOrchestration}};
 
     use super::{JamblerMaster, MasterMessage, SlaveMessage};
+
+    use rand::{prelude::SliceRandom, thread_rng};
 
 
     use heapless::{spsc::{Consumer, Producer}, spsc::Queue};
@@ -884,6 +891,7 @@ mod master_tests {
         });
         assert_eq!(spars, master.start_parameters);
         assert_eq!(master.nb_sniffers, NB_SNIFFERS);
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::UsedAlwaysRestTimeOut(50, 1235234, (1 << 15) | (1 << 20)));
 
         while let Some(mm) = bus.bus_master_messages.dequeue() {
             if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
@@ -1070,5 +1078,343 @@ mod master_tests {
         }
 
 
+    }
+
+
+
+    #[test]
+    fn channel_map_test() {
+        let mut store = AllQueuesStore::new();
+        const NB_SNIFFERS : u8 = 10;
+        let mut sniffer_tasks : [Option<RadioTask>;NB_SNIFFERS as usize] = [None, None, None, None, None, None, None, None, None, None];
+
+        let (mut master, mut bus, mut deducer_queues) = setup(&mut store, 10);
+
+        //let mut start_params = DeductionStartParameters::default();
+        //start_params.nb_sniffers = NB_SNIFFERS;
+
+        let spars = DeductionStartParameters {
+            nb_sniffers : NB_SNIFFERS,
+            slave_phy: BlePhy::CodedS8,
+            access_address : 1235234,
+            ..Default::default()
+        };
+        master.execute_command(JamblerCommand::Follow(spars));
+        master.sniffer_orchestration =  SnifferOrchestration::UsedAlwaysRestTimeOut(50, 1235234, (1 << 15) | (1 << 20));
+
+        let mut cht = !((1 << 15) | (1 << 20)) & 0x1F_FF_FF_FF_FF;
+
+        // Test going from conn int to channel map
+        deducer_queues.request_queue.enqueue(DeducerToMaster::StartChannelMap(500, cht, 1235234)).unwrap();
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: true,
+            wake_deducer_task: false,
+            wake_master: false
+        });
+        assert_eq!(spars, master.start_parameters);
+        assert_eq!(master.nb_sniffers, NB_SNIFFERS);
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::TimeOutRemaining(500, cht ^ 0b11_1111_1111,1235234,(1 << 15) | (1 << 20)));
+
+        while let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
+                assert_eq!(harvest_params.access_address, spars.access_address);
+                assert_eq!(harvest_params.master_phy, spars.master_phy);
+                assert_eq!(harvest_params.slave_phy, spars.slave_phy);
+                assert_eq!(harvest_params.channel, sniffer_id );
+                cht &= !(1 << harvest_params.channel) & 0x1F_FF_FF_FF_FF;
+                assert_eq!(harvest_params.listen_until, ListenUntil::PacketReception(500));
+                sniffer_tasks[sniffer_id as usize] = Some(RadioTask::Harvest(harvest_params));
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        }
+        assert!(sniffer_tasks.iter().all(|t| t.is_some()));
+
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::TimeOutRemaining(500, cht,1235234,(1 << 15) | (1 << 20)));
+
+        // Send sample with not OK crc init
+        let mut sample_nok = ConnectionSample {
+            slave_id: 0,
+            channel: 0, // 3 is listening on channel 0
+            time: 300,
+            silence_time_on_channel: 14,
+            packet: ConnectionSamplePacket {
+                first_header_byte: 9,
+                reversed_crc_init: 123, // <- wrong
+                phy: BlePhy::Uncoded1M,
+                rssi: 0,
+            },
+            response: None,
+        };
+
+        if bus.bus_slave_messages.enqueue(SlaveMessage {
+            message : SlaveMessageType::SampleReport(sample_nok.clone()),
+            slave_id: 0,
+            relative_slave_drift: 10,
+            }).is_err() {
+            panic!("overf")
+        }
+
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: true,
+            wake_deducer_task: true,
+            wake_master: false
+        });
+
+        // adjust drift
+        sample_nok.time += 10;
+        assert_eq!(sample_nok, deducer_queues.sample_queue.dequeue().unwrap());
+        assert!(deducer_queues.sample_queue.dequeue().is_none());
+
+        if let Some(MasterMessage { recipient : BusRecipient::Slave(0), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(h)) }) = bus.bus_master_messages.dequeue() {
+            assert_eq!(h.channel, 0);
+            assert_eq!(h.listen_until, ListenUntil::PacketReception(500 - 14)); // Should listen for remaining time
+        }
+        else {
+            panic!("")
+        }
+        assert!(bus.bus_master_messages.dequeue().is_none());
+
+        let mut rng = thread_rng();
+
+        // TODO laat ze de channels reporten tot er geen meer zijn en check dan ook op brute force parameters door ze te zenden achteraf
+        let mut channels_todo_vec = (0..37u8).filter(|c| cht & (1 << *c) != 0).collect::<Vec<_>>();
+        let mut stop = false;
+        while !stop {
+            // let report 2 as used, 3 unused
+            let mut candidates = sniffer_tasks.iter().enumerate().map(|(d,s)| 
+                if let Some(RadioTask::Harvest(h)) = s {
+                    (d as u8, h.channel)
+                }
+                else {
+                    panic!("")
+                }
+            ).filter(|(s, c)| master.sniffer_positions[*s as usize] != u8::MAX)
+            .inspect(|(s, c)|  assert_eq!(master.sniffer_positions[*s as usize], *c))
+            .collect_vec();
+
+            stop = candidates.is_empty();
+
+            candidates.shuffle(&mut rng);
+            let chantot = candidates.iter().take(4).cloned().collect_vec();
+            let channels_to_see = chantot.iter().enumerate().filter_map(|(i, c)| if i % 2 == 0 {Some(*c)} else {None}).collect_vec();
+            let channels_to_not_see = chantot.iter().enumerate().filter_map(|(i, c)| if i % 2 != 0 {Some(*c)} else {None}).collect_vec();
+
+            let mut samples = vec![];
+            let mut sniffers = chantot.iter().map(|c| c.0).collect_vec();
+            
+            
+
+            for (sniffer_id, channel) in channels_to_see {
+
+                let sample = ConnectionSample {
+                    slave_id: sniffer_id,
+                    channel,
+                    time: 300,
+                    silence_time_on_channel: 50,
+                    packet: ConnectionSamplePacket {
+                        first_header_byte: 9,
+                        reversed_crc_init: 1235234,
+                        phy: BlePhy::Uncoded1M,
+                        rssi: 0,
+                    },
+                    response: None,
+                };
+    
+                if bus.bus_slave_messages.enqueue(SlaveMessage {
+                    message : SlaveMessageType::SampleReport(sample.clone()),
+                    slave_id: sniffer_id,
+                    relative_slave_drift: -10,
+                    }).is_err() {
+                    panic!("overf")
+                }
+
+                samples.push(sample)
+
+            }
+
+            let mut unuseds = vec![];
+            
+            for (sniffer_id, channel) in channels_to_not_see {
+                let sample = UnusedChannel {
+                    channel,
+                    sniffer_id
+                };
+                if bus.bus_slave_messages.enqueue(SlaveMessage {
+                    message : SlaveMessageType::UnusedChannelReport(sample.clone()),
+                    slave_id: sniffer_id,
+                    relative_slave_drift: -10,
+                    }).is_err() {
+                    panic!("overf")
+                }
+                unuseds.push(sample)
+            }
+            
+            let ret = master.master_loop();
+            assert_eq!(ret, MasterLoopReturn {
+                wake_bus_transmitter: !channels_todo_vec.is_empty(),
+                wake_deducer_task: !stop,
+                wake_master: false
+            });
+
+            // Check if they were put through
+            while let Some(mut s) = deducer_queues.sample_queue.dequeue() {
+                s.time += 10;
+                let i = samples.iter().position(|a| a == &s).unwrap();
+                samples.remove(i);
+            }
+            assert!(samples.is_empty());
+
+            while let Some( s) = deducer_queues.unused_queue.dequeue() {
+                let i = unuseds.iter().position(|a| a == &s).unwrap();
+                unuseds.remove(i);
+            }
+            assert!(unuseds.is_empty());
+
+            // Check if they were reassigned
+            while let Some(mm) = bus.bus_master_messages.dequeue() {
+                if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
+                    assert_eq!(harvest_params.access_address, spars.access_address);
+                    assert_eq!(harvest_params.master_phy, spars.master_phy);
+                    assert_eq!(harvest_params.slave_phy, spars.slave_phy);
+                    assert!(sniffers.contains(&sniffer_id));
+                    let r = sniffers.iter().position(|g| g == &sniffer_id).unwrap();
+                    sniffers.remove(r);
+                    let c = harvest_params.channel;
+                    let r = channels_todo_vec.iter().position(|g| g == &c).unwrap();
+                    channels_todo_vec.remove(r);
+                    assert_eq!(harvest_params.listen_until, ListenUntil::PacketReception(500));
+                    sniffer_tasks[sniffer_id as usize] = Some(RadioTask::Harvest(harvest_params));
+                }
+                else {
+                    panic!("wrong harvest params")
+                }
+            }
+            assert!(bus.bus_master_messages.dequeue().is_none());
+
+            assert!(sniffers.is_empty() || channels_todo_vec.is_empty());
+
+            if let SnifferOrchestration::TimeOutRemaining(500, 0,1235234,_) = master.sniffer_orchestration {
+                assert!(channels_todo_vec.is_empty())
+            }
+        }
+
+
+        if let SnifferOrchestration::TimeOutRemaining(500, 0,1235234,_) = master.sniffer_orchestration {
+        } else {panic!("")}
+
+        // see if it does not get more
+        let sample = ConnectionSample {
+            slave_id: 0,
+            channel : 0,
+            time: 300,
+            silence_time_on_channel: 50,
+            packet: ConnectionSamplePacket {
+                first_header_byte: 9,
+                reversed_crc_init: 1235234,
+                phy: BlePhy::Uncoded1M,
+                rssi: 0,
+            },
+            response: None,
+        };
+
+        if bus.bus_slave_messages.enqueue(SlaveMessage {
+            message : SlaveMessageType::SampleReport(sample),
+            slave_id: 0,
+            relative_slave_drift: -10,
+            }).is_err() {
+            panic!("overf")
+        }
+
+
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: false,
+            wake_deducer_task: true,
+            wake_master: false
+        });
+
+        assert!(bus.bus_master_messages.dequeue().is_none());
+
+        assert!(deducer_queues.sample_queue.dequeue().is_some());
+        assert!(deducer_queues.sample_queue.dequeue().is_none());
+
+        if let SnifferOrchestration::TimeOutRemaining(500, 0,1235234,_) = master.sniffer_orchestration {
+        } else {panic!("")}
+
+        // check brute force
+        #[cfg(not(target_arch="x86_64"))]
+        {static mut BFP_HEAP : MaybeUninit<[Node<BruteForceParameters>;(NB_SNIFFERS + 1) as usize]> = MaybeUninit::uninit();
+        unsafe{BruteForceParametersBox::grow_exact(&mut BFP_HEAP)};}
+
+        let mut bf = convert_bf_param(&BruteForceParameters::default());
+
+        bf.seen_channel_map =  !((1 << 5) | (1 << 20)) & 0x1F_FF_FF_FF_FF;
+
+        // Test going from conn int to channel map
+        deducer_queues.request_queue.enqueue(DeducerToMaster::DistributedBruteForce(clone_bf_param(&bf), bf.seen_channel_map)).unwrap();
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: true,
+            wake_deducer_task: false,
+            wake_master: false
+        });
+        assert_eq!(spars, master.start_parameters);
+        assert_eq!(master.nb_sniffers, NB_SNIFFERS);
+        assert_eq!(master.sniffer_orchestration, SnifferOrchestration::UsedAlwaysRestTimeOut(0,0, bf.seen_channel_map));
+        
+        let mut bf_seen = false;
+        while let Some(mm) = bus.bus_master_messages.dequeue() {
+            if let MasterMessage { recipient : BusRecipient::Slave(sniffer_id), message : MasterMessageType::RadioTaskRequest(RadioTask::Harvest(harvest_params)) } = mm {
+                assert_eq!(harvest_params.access_address, spars.access_address);
+                assert_eq!(harvest_params.master_phy, spars.master_phy);
+                assert_eq!(harvest_params.slave_phy, spars.slave_phy);
+                let c = sniffer_id + if sniffer_id >= 5 {1} else {0};
+                assert_eq!(harvest_params.channel , c);
+                assert_eq!(harvest_params.listen_until, ListenUntil::Indefinitely);
+                sniffer_tasks[sniffer_id as usize] = Some(RadioTask::Harvest(harvest_params));
+            }
+            else if let MasterMessage { recipient : BusRecipient::Broadcast, message : MasterMessageType::BruteForce(p) } = mm {
+                assert_eq!(p, bf);
+                assert!(!bf_seen);
+                bf_seen = true;
+            }
+            else {
+                panic!("wrong harvest params")
+            }
+        }
+        assert!(bus.bus_master_messages.dequeue().is_none());
+        assert!(bf_seen);
+
+
+        if bus.bus_slave_messages.enqueue(SlaveMessage {
+            message : SlaveMessageType::BruteForceResultReport(BruteForceResult {
+                slave_id: 4,
+                version: 1,
+                result: crate::jambler::deduction::deducer::CounterInterval::NoSolutions,
+            }),
+            slave_id: 4,
+            relative_slave_drift: -10,
+            }).is_err() {
+            panic!("overf")
+        }
+
+        let ret = master.master_loop();
+        assert_eq!(ret, MasterLoopReturn {
+            wake_bus_transmitter: false,
+            wake_deducer_task: true,
+            wake_master: false
+        });
+
+        if let Some(d) = deducer_queues.brute_force_result_queue.dequeue() {
+            assert_eq!(d.slave_id, 4);
+            assert_eq!(d.version, 1);
+            assert_eq!(d.result, crate::jambler::deduction::deducer::CounterInterval::NoSolutions);
+        }
+        else {panic!()}
+        assert!(deducer_queues.brute_force_result_queue.dequeue().is_none())
     }
 }
