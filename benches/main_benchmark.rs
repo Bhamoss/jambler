@@ -4,10 +4,10 @@ use core::mem::MaybeUninit;
 #[cfg(not(target_arch="x86_64"))]
 use heapless::pool::{Node, singleton::Pool};
 #[cfg(not(target_arch="x86_64"))]
-use jambler::jambler::deduction::control::BruteForceParametersBox;
+use jambler::deduction::control::BruteForceParametersBox;
 
 use criterion::{ criterion_group, criterion_main, Criterion};
-use jambler::{self, jambler::deduction::{brute_force::{BruteForceParameters, brute_force, clone_bf_param, convert_bf_param},  deducer::CounterInterval::{self, *}}};
+use jambler::{self, deduction::{brute_force::{BruteForceParameters, brute_force, clone_bf_param, convert_bf_param},  deducer::CounterInterval::{self, *}}};
 use rayon::prelude::*;
 
 

@@ -40,9 +40,10 @@ aarch64-unknown-linux-gnu
 They all seem to support RBIT, REV16 and UDIV
 */
 
-pub mod jambler;
+pub mod slave;
 pub mod ble_algorithms;
-pub mod jambler_master;
+pub mod master;
+pub mod deduction;
 
 #[cfg(test)]
 mod tests {

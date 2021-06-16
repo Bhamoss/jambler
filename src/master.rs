@@ -1,4 +1,5 @@
-use crate::jambler::{BlePhy, deduction::{brute_force::{BfParam, BruteForceResult}, control::{ DeduceConnectionParametersControl,  DeducerToMaster, DpParam}, deducer::{ConnectionSample, DeducedParameters, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}};
+use crate::slave::{BlePhy};
+use crate::deduction::{brute_force::{BfParam, BruteForceResult}, control::{ DeduceConnectionParametersControl,  DeducerToMaster, DpParam}, deducer::{ConnectionSample, DeducedParameters, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}};
 
 use heapless::{spsc::{Consumer, Producer}};
 
@@ -14,7 +15,7 @@ pub enum MasterMessageType {
     /// Broadcast brute force to all sniffers.
     BruteForce(BfParam),
     /// Broadcast all sniffers to idle (sleep if they can)
-    Idle
+    Idle // TODO delete
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -29,17 +30,18 @@ pub enum RadioTask {
     Harvest(HarvestParameters),
     /// Sniffer(s) should follow the connection and report back when no packet was received for a connection event and channel.
     Follow(DpParam, Option<u64>),
+    Idle
 }
 
 pub struct HarvestParameters {
-    channel: u8,
-    access_address: u32,
-    master_phy : BlePhy,
-    slave_phy : BlePhy,
-    listen_until : ListenUntil
+    pub channel: u8,
+    pub access_address: u32,
+    pub master_phy : BlePhy,
+    pub slave_phy : BlePhy,
+    pub listen_until : ListenUntil
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum ListenUntil {
     // Until packet reception or timeout. Report sample or timeout.
     PacketReception(u32),
@@ -651,11 +653,11 @@ mod master_tests {
     #[cfg(not(target_arch="x86_64"))]
     use core::mem::MaybeUninit;
     #[cfg(not(target_arch="x86_64"))]
-    use crate::jambler::deduction::control::{BruteForceParametersBox, DeducedParametersBox};
+    use crate::deduction::control::{BruteForceParametersBox, DeducedParametersBox};
     #[cfg(not(target_arch="x86_64"))]
     use heapless::pool::{singleton::Pool, Node};
 
-    use crate::{jambler::{BlePhy, deduction::{brute_force::{BruteForceParameters, BruteForceResult, clone_bf_param, convert_bf_param}, control::{DeduceConnectionParametersControl, DeducerToMaster, MasterToDeducer, convert_deduced_param}, deducer::{ConnectionSample, ConnectionSamplePacket, DeducedParameters, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}}, jambler_master::{BusRecipient,  JamblerCommand, ListenUntil, MasterLoopReturn, MasterMessageType, MasterState, RadioTask, SlaveMessageType, SnifferOrchestration}};
+    use crate::{slave::{BlePhy}, master::{BusRecipient,  JamblerCommand, ListenUntil, MasterLoopReturn, MasterMessageType, MasterState, RadioTask, SlaveMessageType, SnifferOrchestration}, deduction::{brute_force::{BruteForceParameters, BruteForceResult, clone_bf_param, convert_bf_param}, control::{DeduceConnectionParametersControl, DeducerToMaster, MasterToDeducer, convert_deduced_param}, deducer::{ConnectionSample, ConnectionSamplePacket, DeducedParameters, DeductionStartParameters, UnsureChannelEvent, UnusedChannel}}};
 
     use super::{JamblerMaster, MasterMessage, SlaveMessage};
 
@@ -832,7 +834,6 @@ mod master_tests {
                 {
                     let unuse = UnusedChannel {
                         channel : if let RadioTask::Harvest(h) = s.as_ref().unwrap() {h.channel} else {panic!("")},
-                        sniffer_id : id as u8
                     };
 
                     unused_channels_m.push(unuse.clone());
@@ -874,7 +875,6 @@ mod master_tests {
 
         // report sample and check if it propagates
         let mut sample = ConnectionSample {
-            slave_id: 0,
             channel: 1,
             time: 300,
             silence_time_on_channel: 50,
@@ -987,7 +987,6 @@ mod master_tests {
 
         // Send sample wit OK and with not OK crc init
         let mut sample_nok = ConnectionSample {
-            slave_id: 3,
             channel: 0, // 3 is listening on channel 0
             time: 300,
             silence_time_on_channel: 14,
@@ -1009,7 +1008,6 @@ mod master_tests {
         }
 
         let mut sample = ConnectionSample {
-            slave_id: 4,
             channel: 1,
             time: 300,
             silence_time_on_channel: 50,
@@ -1070,13 +1068,18 @@ mod master_tests {
 
         // Send unusedes couple times and check they do not overlap
         for _ in 1..10 {
+            #[derive(Clone)]
+            struct UnusedTemp {
+                channel: u8,
+                sniffer_id : u8
+            }
             let mut unused_channels_m = Vec::new();
 
             sniffer_tasks.iter().enumerate().filter(|(_,s)| 
                 if let RadioTask::Harvest(h) = s.as_ref().unwrap() {h.listen_until != ListenUntil::Indefinitely} else {true})
             .for_each(|(id, s)| 
                 {
-                    let unuse = UnusedChannel {
+                    let unuse = UnusedTemp {
                         channel : if let RadioTask::Harvest(h) = s.as_ref().unwrap() {h.channel} else {panic!("")},
                         sniffer_id : id as u8
                     };
@@ -1084,7 +1087,7 @@ mod master_tests {
                     unused_channels_m.push(unuse.clone());
 
                     if bus.bus_slave_messages.enqueue(SlaveMessage {
-                        message : SlaveMessageType::UnusedChannelReport(unuse),
+                        message : SlaveMessageType::UnusedChannelReport(UnusedChannel{ channel: unuse.channel}),
                         slave_id: id as u8,
                         relative_slave_drift: 10,
                         }).is_err() {
@@ -1219,7 +1222,6 @@ mod master_tests {
 
         // Send sample with not OK crc init
         let mut sample_nok = ConnectionSample {
-            slave_id: 0,
             channel: 0, // 3 is listening on channel 0
             time: 300,
             silence_time_on_channel: 14,
@@ -1294,7 +1296,6 @@ mod master_tests {
             for (sniffer_id, channel) in channels_to_see {
 
                 let sample = ConnectionSample {
-                    slave_id: sniffer_id,
                     channel,
                     time: 300,
                     silence_time_on_channel: 50,
@@ -1324,7 +1325,6 @@ mod master_tests {
             for (sniffer_id, channel) in channels_to_not_see {
                 let sample = UnusedChannel {
                     channel,
-                    sniffer_id
                 };
                 if bus.bus_slave_messages.enqueue(SlaveMessage {
                     message : SlaveMessageType::UnusedChannelReport(sample.clone()),
@@ -1391,7 +1391,6 @@ mod master_tests {
 
         // see if it does not get more
         let sample = ConnectionSample {
-            slave_id: 0,
             channel : 0,
             time: 300,
             silence_time_on_channel: 50,
@@ -1486,7 +1485,7 @@ mod master_tests {
             message : SlaveMessageType::BruteForceResultReport(BruteForceResult {
                 slave_id: 4,
                 version: 1,
-                result: crate::jambler::deduction::deducer::CounterInterval::NoSolutions,
+                result: crate::deduction::deducer::CounterInterval::NoSolutions,
             }),
             slave_id: 4,
             relative_slave_drift: -10,
@@ -1504,7 +1503,7 @@ mod master_tests {
         if let Some(d) = deducer_queues.brute_force_result_queue.dequeue() {
             assert_eq!(d.slave_id, 4);
             assert_eq!(d.version, 1);
-            assert_eq!(d.result, crate::jambler::deduction::deducer::CounterInterval::NoSolutions);
+            assert_eq!(d.result, crate::deduction::deducer::CounterInterval::NoSolutions);
         }
         else {panic!()}
         assert!(deducer_queues.brute_force_result_queue.dequeue().is_none())

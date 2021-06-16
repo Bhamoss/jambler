@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 use super::{brute_force::{convert_bf_param, BfParam, BruteForceParameters, BruteForceResult}, control::{ DeducerToMaster, MasterToDeducer, convert_deduced_param}, distributions::{geo_qdf, prob_of_seeing_if_used}};
-use crate::{ble_algorithms::csa2::{calculate_channel_identifier}, jambler::BlePhy};
+use crate::{ble_algorithms::csa2::{calculate_channel_identifier}, slave::BlePhy};
 // vscode gives fake warnings here, thinking we are using std for some reason...
 #[allow(unused_imports)]
 use num::{Integer, integer::{binomial, gcd}, traits::Float};
@@ -53,10 +53,10 @@ pub struct UnsureChannelEvent {
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 /// A struct holding all important information a subevent can hold for reversing the parameters of a connection.
 pub struct ConnectionSample {
-    pub slave_id: u8,
+    //pub slave_id: u8,
     pub channel: u8,
     pub time: u64,
     pub silence_time_on_channel: u32,
@@ -64,14 +64,43 @@ pub struct ConnectionSample {
     pub response: Option<ConnectionSamplePacket>,
 }
 
+
+/// Implementing display for it because it is very necessary for debugging
+impl core::fmt::Display for ConnectionSample {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.response {
+            Some(response) => {
+                write!(
+                    f,
+                    "\nSubevent channel {} at {}\nMaster{}\nSlave{}\n",
+                    self.channel, self.time, self.packet, response
+                )
+            }
+            None => {
+                write!(
+                    f,
+                    "\nPartial subevent channel {} at {}\nPacket\n{}\n",
+                    self.channel, self.time, self.packet
+                )
+            }
+        }
+    }
+}
+
+impl core::fmt::Debug for ConnectionSample {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct UnusedChannel {
     pub channel: u8,
-    pub sniffer_id: u8
+    //pub sniffer_id: u8
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 /// Holds all information a packet belonging to a subevent can hold
 pub struct ConnectionSamplePacket {
     /// The first header byte, holding important flags for helping determine if this was an anchorpoint or not
@@ -84,6 +113,24 @@ pub struct ConnectionSamplePacket {
     /// The rssi at which the packet has been captured
     pub rssi: i8,
 }
+
+
+impl core::fmt::Display for ConnectionSamplePacket {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "\n|{:08b} ... | CRC INIT: 0x{:06X}, PHY {:?}, RSSI {}\n",
+            self.first_header_byte, self.reversed_crc_init, self.phy, self.rssi
+        )
+    }
+}
+
+impl core::fmt::Debug for ConnectionSamplePacket {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 
 
 #[derive(Clone, Debug, Copy, PartialEq, Default)]
@@ -980,7 +1027,7 @@ mod deducer_helper_tests {
 mod deducer_tests {
     use core::mem::MaybeUninit;
 
-    use crate::jambler::deduction::{brute_force::{brute_force, clone_bf_param}, control::{DeductionQueueStore, DpBuf, BfpBuf}};
+    use crate::deduction::{brute_force::{brute_force, clone_bf_param}, control::{DeductionQueueStore, DpBuf, BfpBuf}};
     use super::CounterInterval::{self, *};
     use std::{vec::Vec};
     use super::*;
@@ -1007,8 +1054,8 @@ mod deducer_tests {
         let (mut control,mut state) = unsafe{store.split(&mut DP_BUF, &mut BFP_BUF)};
 
         // Put some packets in the state buffers, they need to get flushed
-        control.send_connection_sample(ConnectionSample{ slave_id: 1, channel: 2, time: 3, silence_time_on_channel: 4, packet: ConnectionSamplePacket{ first_header_byte: 5, reversed_crc_init: 6, phy: BlePhy::Uncoded1M, rssi: 7 }, response: None });
-        control.send_unused_channel(UnusedChannel{ channel: 1,  sniffer_id: 3 });
+        control.send_connection_sample(ConnectionSample{ channel: 2, time: 3, silence_time_on_channel: 4, packet: ConnectionSamplePacket{ first_header_byte: 5, reversed_crc_init: 6, phy: BlePhy::Uncoded1M, rssi: 7 }, response: None });
+        control.send_unused_channel(UnusedChannel{ channel: 1,   });
         control.send_brute_force_result(BruteForceResult{ slave_id: 1, version: 2, result: CounterInterval::NoSolutions });
         control.send_unsure_channel_event(UnsureChannelEvent{ channel: 1, time: 2, event_counter: 3, seen: false });
 
@@ -1105,7 +1152,6 @@ mod deducer_tests {
             {
                 running_time += d as u64;
                 ConnectionSample {
-                slave_id: 0,
                 channel: (idx as u8) % 37,
                 time: running_time,
                 silence_time_on_channel: state.silence_time + 1,
@@ -1122,7 +1168,6 @@ mod deducer_tests {
         let mut bad_samples = (0..not_anchors).map(|idx|
             {
                 ConnectionSample {
-                slave_id: 0,
                 channel: (idx as u8) % 37,
                 time: idx as u64,
                 silence_time_on_channel: if idx % 2 != 0 {state.silence_time + 1} else {state.silence_time - 1},
@@ -1352,7 +1397,6 @@ mod deducer_tests {
             {
                 let running_time = start_time + (rel_event as u64 * state.connection_interval as u64) ;
                 ConnectionSample {
-                slave_id: 0,
                 channel,
                 time: running_time,
                 silence_time_on_channel: state.silence_time + 1,
@@ -1426,7 +1470,7 @@ mod deducer_tests {
         assert_eq!(calculate_channel_identifier(state.start_parameters.access_address), channel_id);
 
         let (mut samples, last_time) = packets_to_samples(packets.clone(), &state);
-        let mut unused_rep = (0u8..37).filter(|c| samples.iter().all(|p| p.channel != *c)).map(|c| UnusedChannel { channel: c, sniffer_id: 0 }).collect_vec();
+        let mut unused_rep = (0u8..37).filter(|c| samples.iter().all(|p| p.channel != *c)).map(|c| UnusedChannel { channel: c }).collect_vec();
 
         let used = packets.iter().map(|p| p.1).unique().collect_vec();
         let unused = unused_rep.iter().map(|p| p.channel).unique().collect_vec();

@@ -318,15 +318,15 @@ mod brute_force_tests {
     #[cfg(not(target_arch="x86_64"))]
     use heapless::pool::singleton::Pool;
     #[cfg(not(target_arch="x86_64"))]
-    use crate::jambler::deduction::control::BruteForceParametersBox;
+    use crate::deduction::control::BruteForceParametersBox;
     use std::vec::Vec;
     use std::iter::Iterator;
     //use itertools::Itertools;
-    use crate::jambler::deduction::brute_force::BruteForceParameters;
-    use crate::jambler::deduction::brute_force::brute_force;
-    use crate::jambler::deduction::brute_force::clone_bf_param;
-    use crate::jambler::deduction::brute_force::convert_bf_param;
-    use crate::jambler::deduction::deducer::CounterInterval::{self, *};
+    use crate::deduction::brute_force::BruteForceParameters;
+    use crate::deduction::brute_force::brute_force;
+    use crate::deduction::brute_force::clone_bf_param;
+    use crate::deduction::brute_force::convert_bf_param;
+    use crate::deduction::deducer::CounterInterval::{self, *};
     use rayon::prelude::*;
 
 
